@@ -1,38 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-epd_test.py — HINK-E042A13-A0 / SSD1619 4.2" 400x300 黑白墨水屏测试 Demo
+epd_test.py — SSD1619 4.2" 400x300 墨水屏「中文显示」测试
 
-配套驱动: library/epd_ssd1619.py
+依赖:
+    library/epd_ssd1619.py    屏驱动
+    library/unifont.py        UFB1 位图字库读取 / 渲染
+    /fonts/unifont16.bin      字库(由 tools/build_font.py 生成, tools/upload.sh 上传)
 
-用法（板子上）:
+用法(板子上):
     import epd_test
-    epd_test.run_all()          # 依次执行全部测试
-    epd_test.menu()             # 交互式菜单（可选单项）
-或直接:
-    mpremote connect /dev/ttyACM0 run epd_test.py
+    epd_test.run_all()              # 依次跑完全部中文显示测试
+    epd_test.run_all(do_sleep=True) # 跑完让屏休眠
+    epd_test.menu()                 # 交互菜单, 逐项测试
+或从 PC:
+    mpremote connect /dev/ttyACM0 exec "import epd_test; epd_test.run_all()"
 
-说明:
-  * 点阵字体只有 8x8 ASCII，中文需要自备字库，本 Demo 不含。
-  * 屏幕为纯黑白，所谓"灰度"是用 4x4 Bayer 抖动模拟出来的。
-  * 首次运行前，请先核对下面的“接线配置”，改成你的实际引脚！
+画布语义: 1 = 墨(黑), 0 = 底(白); 字库默认也是 natural(1=墨), 送显时统一取反。
 """
 
 import time
-import gc
 import sys
 import framebuf
 
 try:
     import machine
     from machine import Pin, SPI
-except ImportError:          # 在 PC 上做语法检查时会走到这里
+except ImportError:                      # 在 PC 上做语法检查时会走到这里
     machine = None
     Pin = SPI = None
 
 
 # ===========================================================================
-# ① 接线配置
-# ---------------------------------------------------------------------------
+# ① 接线配置 —— 请按实际接线修改
+# ===========================================================================
 #   屏幕丝印   含义                接到 ESP32-S3-N16R8    本文件变量
 #   --------   ----------------    -------------------    ----------
 #   3V3        电源 3.3V           3V3                    (切勿接 5V!)
@@ -43,45 +43,41 @@ except ImportError:          # 在 PC 上做语法检查时会走到这里
 #   D/C        数据/命令选择 (DC)  GPIO9                  PIN_DC
 #   RES        复位 (RST)          GPIO8                  PIN_RST
 #   BUSY       忙信号              GPIO7                  PIN_BUSY
-#
-#   说明:
-#     * SDI = MOSI，由 ESP32 输出数据；SCLK = 时钟。屏是只写设备，
-#       没有 MISO / 回读引脚，所以 SPI 只初始化 sck + mosi。
-#     * 这 6 个 GPIO 可任意选(避开 GPIO26-32、19/20、43/44)，
-#       只要和下面几行保持一致即可。
 # ===========================================================================
-PIN_SCK  = 12    # 屏幕 SCLK
-PIN_MOSI = 11    # 屏幕 SDI
-PIN_CS   = 10    # 屏幕 CS
-PIN_DC   = 9     # 屏幕 D/C
-PIN_RST  = 8     # 屏幕 RES
-PIN_BUSY = 7     # 屏幕 BUSY
-SPI_ID   = 1     # ESP32-S3 用 SPI(1)；失败会自动退回 SPI(2)
-SPI_BAUD = 4_000_000     # 4 MHz 稳定；可试 8_000_000
+PIN_SCK  = 12
+PIN_MOSI = 11
+PIN_CS   = 10
+PIN_DC   = 9
+PIN_RST  = 8
+PIN_BUSY = 7
+SPI_ID   = 1
+SPI_BAUD = 4_000_000
 
 WIDTH  = 400
 HEIGHT = 300
+MARGIN = 12
+
+# 字库候选路径(设备上 assets/fonts/* -> /fonts/*)
+FONT_CANDIDATES = (
+    "/fonts/unifont16.bin",
+    "fonts/unifont16.bin",
+    "assets/fonts/unifont16.bin",
+)
 
 
 # ===========================================================================
-# ② 导入驱动（兼容 library/ 放在设备根目录、/lib 或脚本同级目录）
+# ② 导入驱动与字库(兼容 library/ 放设备根目录、/lib 或脚本同级)
 # ===========================================================================
-def _import_driver():
-    try:
-        from epd_ssd1619 import EPD_SSD1619
-        return EPD_SSD1619
-    except ImportError:
-        pass
-
-    cands = ["library", "/library", "/lib"]
+def _setup_path():
+    here = ""
     try:
         here = __file__.rsplit("/", 1)[0]
-        if here:
-            cands.insert(0, here + "/library")
-            cands.insert(1, here)
     except Exception:
         pass
-
+    cands = []
+    if here:
+        cands += [here, here + "/library"]
+    cands += ["library", "/library", "/lib"]
     for p in cands:
         try:
             if p and p not in sys.path:
@@ -89,430 +85,433 @@ def _import_driver():
         except Exception:
             pass
 
+
+_setup_path()
+
+try:
     from epd_ssd1619 import EPD_SSD1619
-    return EPD_SSD1619
+except ImportError:
+    raise ImportError("找不到驱动 epd_ssd1619.py(应在 /library/ 下)")
+
+try:
+    from unifont import Unifont
+except ImportError:
+    raise ImportError("找不到 unifont.py(应在 /library/ 下)")
 
 
-EPD = _import_driver()
+def find_font():
+    import os
+    for p in FONT_CANDIDATES:
+        try:
+            os.stat(p)
+            return p
+        except OSError:
+            pass
+    return None
 
 
 # ===========================================================================
-# ③ 画布封装
+# ③ 画布
 # ===========================================================================
 class Canvas:
-    """把 400x300 的 framebuf(MONO_HLSB) 包一层，负责送显和计时。"""
+    """400x300 framebuf 封装。1=墨, 0=底; 送显时取反为 panel 语义。"""
 
-    def __init__(self, epd):
+    def __init__(self, epd, font):
         self.epd = epd
+        self.font = font
         self.buf = bytearray(epd.row_bytes * epd.height)
         self.fb = framebuf.FrameBuffer(
-            self.buf, epd.width, epd.height, framebuf.MONO_HLSB
-        )
+            self.buf, epd.width, epd.height, framebuf.MONO_HLSB)
+        # 整帧取反用大整数 XOR(C 层), 比逐字节 Python 循环快得多
+        self._mask = int.from_bytes(b"\xff" * len(self.buf), "big")
+        self._fast_invert = True
 
-    def clear(self, color=0):
-        """color=0 -> 白底（驱动会取反）。"""
-        self.fb.fill(color)
+    def _to_panel(self):
+        if self._fast_invert:
+            try:
+                return (int.from_bytes(self.buf, "big") ^ self._mask).to_bytes(
+                    len(self.buf), "big")
+            except Exception:
+                self._fast_invert = False
+        return EPD_SSD1619.invert(self.buf)
 
     def show(self, mode="full"):
-        """送显并返回耗时(ms)。mode: 'full' | 'fast' | 'partial'。"""
         t0 = time.ticks_ms()
-        self.epd.display(EPD.invert(self.buf), mode=mode)
+        self.epd.display(self._to_panel(), mode=mode)
         return time.ticks_diff(time.ticks_ms(), t0)
 
 
 # ===========================================================================
-# ④ 绘图小工具
+# ④ 中文排版小工具
 # ===========================================================================
-_GLYPH_FB = None
+TITLE = "墨水屏中文显示测试"
 
 
-def _glyph_fb():
-    global _GLYPH_FB
-    if _GLYPH_FB is None:
-        _GLYPH_FB = framebuf.FrameBuffer(bytearray(8), 8, 8, framebuf.MONO_HLSB)
-    return _GLYPH_FB
+def title(c, s):
+    """黑底白字的标题栏, 返回内容区起始 y。返回的同时也顺带测了反白。"""
+    fb = c.fb
+    lh = c.font.line_height
+    fb.fill_rect(0, 0, WIDTH, lh, 1)
+    c.font.draw(fb, s, MARGIN, 1, ink=0)
+    return lh + 6
 
 
-def text_width(s, scale=1):
-    return 8 * scale * len(s)
+def center(c, s, y, ink=1):
+    x = (WIDTH - c.font.text_width(s)) // 2
+    return c.font.draw(c.fb, s, x, y, ink)
 
 
-def draw_text(fb, s, x, y, color=1, scale=1, bg=0):
-    """支持整数倍放大的 8x8 文字。color=1 -> 黑字，color=0 -> 白字(反白)。
-    返回结束后下一个字符的 x 坐标。"""
-    if scale <= 1:
-        fb.text(s, x, y, color)
-        return x + 8 * len(s)
-
-    g = _glyph_fb()
-    cx = x
-    for ch in s:
-        g.fill(bg)
-        g.text(ch, 0, 0, color)
-        for row in range(8):
-            for col in range(8):
-                if g.pixel(col, row):
-                    fb.fill_rect(cx + col * scale, y + row * scale,
-                                 scale, scale, color)
-        cx += 8 * scale
-    return cx
-
-
-def draw_center(fb, s, y, color=1, scale=1, x=0, w=WIDTH):
-    xx = x + (w - text_width(s, scale)) // 2
-    draw_text(fb, s, xx, y, color, scale)
-    return xx
-
-
-_BAYER4 = (
-    (0,  8,  2, 10),
-    (12, 4, 14,  6),
-    (3, 11,  1,  9),
-    (15, 7, 13,  5),
-)
-
-
-def dither_rect(fb, x, y, w, h, level):
-    """用 4x4 Bayer 抖动填充一块“灰度”区域，level 0..16。"""
-    for j in range(h):
-        row = _BAYER4[j & 3]
-        for i in range(w):
-            if row[i & 3] < level:
-                fb.pixel(x + i, y + j, 1)
+def right(c, s, x_right, y, ink=1):
+    return c.font.draw(c.fb, s, x_right - c.font.text_width(s), y, ink)
 
 
 # ===========================================================================
-# ⑤ 各项测试
+# ⑤ 测试项
 # ===========================================================================
-def t_info(c, epd):
-    """屏幕信息 + 引脚信息。"""
+def t_basic(c, epd):
+    """① 中文基础渲染: 字库、行高、每行字数。"""
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
-    fb.rect(0, 0, WIDTH, HEIGHT, 1)
-    fb.rect(1, 1, WIDTH - 2, HEIGHT - 2, 1)
-    draw_center(fb, "E-PAPER TEST", 12, 1, 3)
-    fb.hline(24, 46, WIDTH - 48, 1)
-    draw_center(fb, "SSD1619 / UC8151D   400x300  1-bit", 54, 1, 1)
+    y = title(c, "1. 中文基础渲染")
 
-    lines = [
-        "SPI%d  SCK=%d  MOSI=%d  %dMHz" % (
-            SPI_ID, PIN_SCK, PIN_MOSI, SPI_BAUD // 1000000),
-        "CTRL  CS=%d  DC=%d  RST=%d  BUSY=%d" % (
-            PIN_CS, PIN_DC, PIN_RST, PIN_BUSY),
-    ]
-    if machine is not None:
-        try:
-            lines.append("CPU freq   : %d MHz" % (machine.freq() // 1000000))
-        except Exception:
-            pass
-    try:
-        lines.append("MicroPython: %s" % ".".join(
-            str(v) for v in sys.implementation.version))
-    except Exception:
-        lines.append("MicroPython: (unknown)")
-    lines.append("free heap  : %d KB" % (gc.mem_free() // 1024))
+    y += 8
+    for line in ("春眠不觉晓，处处闻啼鸟。",
+                 "夜来风雨声，花落知多少。",
+                 "—— 唐·孟浩然《春晓》"):
+        center(c, line, y)
+        y += lh
 
-    y = 82
-    for s in lines:
-        fb.text(s, 20, y, 1)
-        y += 14
-
-    # 色块 / 图案测试
-    fb.fill_rect(20, 190, 70, 50, 1)
-    fb.text("black", 26, 246, 1)
-    fb.rect(110, 190, 70, 50, 1)
-    fb.text("white", 116, 246, 1)
-    # 棋盘格
-    for j in range(5):
-        for i in range(9):
-            if (i + j) & 1:
-                fb.fill_rect(200 + i * 10, 190 + j * 10, 10, 10, 1)
-    fb.text("checker", 232, 246, 1)
-    fb.text("worst-case pattern", 20, 266, 1)
+    y += 10
+    fb.hline(MARGIN, y, WIDTH - 2 * MARGIN, 1)
+    y += 10
+    for s in ("字库 Unifont 16x16，行高 %d px" % lh,
+              "每行可排 %d 个汉字" % (WIDTH // font.cell_h),
+              "整屏可排 %d 行" % (HEIGHT // lh)):
+        font.draw(fb, s, MARGIN, y)
+        y += lh
 
     ms = c.show("full")
-    print("[info] full refresh = %d ms" % ms)
+    print("[1 基础] %d ms" % ms)
     return ms
 
 
-def t_shapes(c, epd):
-    """基本图元。"""
+def t_mixed(c, epd):
+    """② 中英数混排 + 基线对齐。"""
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
-    draw_center(fb, "SHAPES", 2, 1, 2)
-    fb.hline(20, 22, WIDTH - 40, 1)
+    y = title(c, "2. 中英数混排 · 基线")
 
-    # 线 / 三角形
-    fb.line(20, 40, 180, 140, 1)
-    fb.line(180, 140, 20, 140, 1)
-    fb.line(20, 140, 20, 40, 1)
-    # 空心矩形
-    fb.rect(210, 40, 80, 60, 1)
-    # 实心矩形
-    fb.fill_rect(300, 40, 80, 60, 1)
-    # 分隔线
-    fb.hline(20, 162, WIDTH - 40, 1)
-    # 椭圆
-    fb.ellipse(70, 218, 45, 40, 1)
-    fb.fill_ellipse(180, 218, 45, 40, 1)
-    # 反白文字
-    fb.fill_rect(260, 178, 120, 80, 1)
-    draw_center(fb, "INV", 208, 0, 3, x=260, w=120)
+    y += 6
+    for s in ("汉字宽 16px，ASCII 宽 8px",
+              "中文English混合test123排版",
+              "ABCabc012 汉字 EFGdef345"):
+        font.draw(fb, s, MARGIN, y)
+        y += lh
 
-    fb.text("triangle", 20, 150 - 6, 1)
-    fb.text("rect", 210, 104, 1)
-    fb.text("fill", 300, 104, 1)
-    fb.text("ellipse", 40, 268, 1)
-    fb.text("fill_ellipse", 140, 268, 1)
-    fb.text("inverted", 278, 262, 1)
+    # 基线检查: 先画字, 再在基线上压一条参考线
+    y += 4
+    font.draw(fb, "基线参照 AMg1e 汉字", MARGIN, y)
+    fb.hline(MARGIN, y + font.baseline, WIDTH - 2 * MARGIN, 1)
+    y += lh + 10
+
+    font.draw(fb, "全角：ＡＢＣ１２３ａｂｃ", MARGIN, y)
+    y += lh
+    font.draw(fb, "半角：ABC123abc", MARGIN, y)
 
     ms = c.show("full")
-    print("[shapes] full refresh = %d ms" % ms)
+    print("[2 混排] %d ms" % ms)
     return ms
 
 
-def t_font(c, epd):
-    """ASCII 字库 + 放大倍数 + 反白。"""
+def t_punct(c, epd):
+    """③ 标点与全角符号。"""
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
-    draw_center(fb, "FONT 8x8", 4, 1, 2)
+    y = title(c, "3. 标点与全角符号")
 
-    # 全部可打印 ASCII，50 个一行
-    for i, code in enumerate(range(32, 127)):
-        fb.text(chr(code), 8 * (i % 50), 24 + 12 * (i // 50), 1)
-    fb.hline(20, 50, WIDTH - 40, 1)
-
-    draw_text(fb, "scale=1  ABCdef 0123 !@#", 16, 58, 1, 1)
-    draw_text(fb, "scale=2", 16, 74, 1, 2)
-    draw_text(fb, "scale=3 ABC", 16, 96, 1, 3)
-    draw_text(fb, "scale=4 Big!", 16, 126, 1, 4)
-
-    fb.fill_rect(16, 170, WIDTH - 32, 44, 1)
-    draw_center(fb, "INVERTED  white-on-black", 182, 0, 2)
-
-    fb.text("Chinese needs a bitmap font (not included)", 16, 228, 1)
-    fb.text("this line is 8px tall", 16, 244, 1)
-    fb.line(16, 262, WIDTH - 16, 262, 1)
-    fb.text("bottom edge marker", 16, 276, 1)
+    y += 4
+    for s in ("中文标点：，。！？；：、（）",
+              "引号括号：“”‘’《》〈〉【】",
+              "省略破折：…… —— · ～",
+              "全角符号：＋－×÷＝／％＃＆＠",
+              "箭头数学：← ↑ → ↓ ↔ ≤ ≥ ≠ ∞",
+              "货币单位：￥ ＄ € ￠ ￡"):
+        font.draw(fb, s, MARGIN, y)
+        y += lh
 
     ms = c.show("full")
-    print("[font] full refresh = %d ms" % ms)
-    return ms
-
-
-def t_gray(c, epd):
-    """B/W 屏的“灰度”模拟：有序抖动。"""
-    fb = c.fb
-    fb.fill(0)
-    draw_center(fb, "ORDERED DITHER", 6, 1, 2)
-
-    # 连续渐变条
-    x0, y0, w, h = 20, 30, 360, 80
-    fb.rect(x0 - 1, y0 - 1, w + 2, h + 2, 1)
-    for j in range(h):
-        row = _BAYER4[j & 3]
-        for i in range(w):
-            if row[i & 3] < (i * 16) // w:
-                fb.pixel(x0 + i, y0 + j, 1)
-    fb.text("0%", x0, y0 + h + 4, 1)
-    fb.text("50%", x0 + w // 2 - 12, y0 + h + 4, 1)
-    fb.text("100%", x0 + w - 32, y0 + h + 4, 1)
-
-    # 5 级灰阶色块
-    labels = ("0%", "25%", "50%", "75%", "100%")
-    levels = (0, 4, 8, 12, 16)
-    pw, ph = 64, 70
-    for i, (lab, lv) in enumerate(zip(labels, levels)):
-        px = 24 + i * (pw + 12)
-        py = 160
-        fb.rect(px - 1, py - 1, pw + 2, ph + 2, 1)
-        dither_rect(fb, px, py, pw, ph, lv)
-        fb.text(lab, px + pw // 2 - 12, py + ph + 4, 1)
-
-    fb.text("dither = fake gray, not real 4-level output", 24, 262, 1)
-
-    ms = c.show("full")
-    print("[gray] full refresh = %d ms" % ms)
+    print("[3 标点] %d ms" % ms)
     return ms
 
 
 def t_align(c, epd):
-    """边界 / 居中 / 偏移检查图案。"""
+    """④ 左 / 中 / 右 对齐。"""
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
+    y = title(c, "4. 左 / 中 / 右 对齐")
+    left, rgt = MARGIN, WIDTH - MARGIN
 
-    # 单像素外框 + 内框
-    fb.rect(0, 0, WIDTH, HEIGHT, 1)
-    fb.rect(1, 1, WIDTH - 2, HEIGHT - 2, 1)
+    y += 6
+    # 边界参考竖线
+    fb.vline(left - 2, y, 3 * lh + 8, 1)
+    fb.vline(rgt + 1, y, 3 * lh + 8, 1)
 
-    # 四角实心块
-    for (px, py) in ((0, 0), (WIDTH - 12, 0), (0, HEIGHT - 12),
-                     (WIDTH - 12, HEIGHT - 12)):
-        fb.fill_rect(px, py, 12, 12, 1)
+    font.draw(fb, "左对齐文本", left, y)
+    y += lh
+    center(c, "居中对齐", y)
+    y += lh
+    right(c, "右对齐文本", rgt, y)
+    y += lh + 8
 
-    # 中心十字
-    cx, cy = WIDTH // 2, HEIGHT // 2
-    fb.line(cx - 20, cy, cx + 20, cy, 1)
-    fb.line(cx, cy - 20, cx, cy + 20, 1)
-    fb.rect(cx - 6, cy - 6, 12, 12, 1)
-
-    # 1px 网格（左上区域）
-    for i in range(0, 120, 10):
-        fb.vline(20 + i, 20, 60, 1)
-    for j in range(0, 60, 10):
-        fb.hline(20, 20 + j, 120, 1)
-
-    fb.text("(0,0)", 16, 16, 1)
-    fb.text("(399,0)", WIDTH - 56, 16, 1)
-    fb.text("(0,299)", 16, HEIGHT - 16, 1)
-    fb.text("(399,299)", WIDTH - 72, HEIGHT - 16, 1)
-    draw_center(fb, "CENTER", cy + 26, 1, 1)
-    fb.text("10px grid", 24, 88, 1)
-    fb.text("1px border -> check clipping / offset", 150, 200, 1)
+    fb.hline(MARGIN, y, WIDTH - 2 * MARGIN, 1)
+    y += 8
+    font.draw(fb, "说明：用 text_width() 精确算宽度，", MARGIN, y)
+    y += lh
+    font.draw(fb, "中英文混排也不会错位。", MARGIN, y)
 
     ms = c.show("full")
-    print("[align] full refresh = %d ms" % ms)
+    print("[4 对齐] %d ms" % ms)
     return ms
 
 
-def _paint_refresh_frame(fb, title, note):
+def t_wrap(c, epd):
+    """⑤ 自动折行(draw_wrapped)。"""
+    fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
-    fb.rect(0, 0, WIDTH, HEIGHT, 1)
-    draw_center(fb, title, 30, 1, 4)
-    draw_center(fb, note, 90, 1, 1)
-    # 一些细节，便于肉眼比较残影
+    y = title(c, "5. 自动折行")
+
+    para = ("这是一个基于 ESP32-S3 与 MicroPython 的墨水屏阅读器实验项目。"
+            "屏幕为 400x300 的 SSD1619 黑白墨水屏，字库使用 GNU Unifont 16x16 位图字库。"
+            "本段用于测试中文自动折行与整页排版，检查标点、行距以及中英混排 Mixed 123 是否整齐。")
+
+    y0 = y + 6
+    y1 = font.draw_wrapped(fb, para, MARGIN, y0, WIDTH - MARGIN)
+    lines = (y1 - y0) // lh
+    fb.hline(MARGIN, y1 + 2, WIDTH - 2 * MARGIN, 1)
+    font.draw(fb, "共 %d 行 / %d 字符，行高 %d" % (lines, len(para), lh),
+              MARGIN, y1 + 8)
+
+    ms = c.show("full")
+    print("[5 折行] %d ms" % ms)
+    return ms
+
+
+def t_page(c, epd):
+    """⑥ 模拟阅读器整页: 状态栏 + 正文 + 底栏。"""
+    fb = c.fb
+    font = c.font
+    lh = font.line_height
+    fb.fill(0)
+
+    # 顶部状态栏(黑底白字)
+    fb.fill_rect(0, 0, WIDTH, lh, 1)
+    font.draw(fb, "将进酒（节选）", MARGIN, 1, ink=0)
+    right(c, "1/3", WIDTH - MARGIN, 1, ink=0)
+
+    body = ("君不见黄河之水天上来，奔流到海不复回。"
+            "君不见高堂明镜悲白发，朝如青丝暮成雪。"
+            "人生得意须尽欢，莫使金樽空对月。"
+            "—— 唐·李白")
+    font.draw_wrapped(fb, body, MARGIN + 4, lh + 12, WIDTH - MARGIN)
+
+    # 底栏
+    fb.hline(MARGIN, HEIGHT - lh - 8, WIDTH - 2 * MARGIN, 1)
+    font.draw(fb, "上一页", MARGIN, HEIGHT - lh - 2)
+    right(c, "下一页", WIDTH - MARGIN, HEIGHT - lh - 2)
+
+    ms = c.show("full")
+    print("[6 整页] %d ms" % ms)
+    return ms
+
+
+def t_invert(c, epd):
+    """⑦ 反白 / 强调 / 选中态。"""
+    fb = c.fb
+    font = c.font
+    lh = font.line_height
+    fb.fill(0)
+    y = title(c, "6. 反白 · 强调 · 选中态")
+
+    y += 8
+    fb.fill_rect(MARGIN, y, WIDTH - 2 * MARGIN, lh + 8, 1)
+    font.draw(fb, "白字黑底：重点提示", MARGIN + 8, y + 4, ink=0)
+    y += lh + 18
+
+    fb.fill_rect(MARGIN, y, WIDTH - 2 * MARGIN, lh, 1)
+    font.draw(fb, "> 选中的菜单项", MARGIN + 8, y + 1, ink=0)
+    y += lh + 4
+    font.draw(fb, "> 未选中的菜单项", MARGIN + 8, y)
+    y += lh + 4
+    font.draw(fb, "> 未选中的菜单项", MARGIN + 8, y)
+    y += lh + 12
+
+    font.draw(fb, "阅读进度 42%", MARGIN, y)
+    y += lh - 4
+    fb.rect(MARGIN, y, WIDTH - 2 * MARGIN, 12, 1)
+    fb.fill_rect(MARGIN + 1, y + 1, int((WIDTH - 2 * MARGIN - 2) * 0.42), 10, 1)
+
+    ms = c.show("full")
+    print("[7 反白] %d ms" % ms)
+    return ms
+
+
+def t_missing(c, epd):
+    """⑧ 缺字占位(字库外的字符)。"""
+    fb = c.fb
+    font = c.font
+    lh = font.line_height
+    fb.fill(0)
+    y = title(c, "7. 缺字占位")
+
+    y += 6
+    font.draw(fb, "以下字符不在字库里，显示为方框：", MARGIN, y)
+    y += lh + 6
+    font.draw(fb, "㐀 汉字扩展A", MARGIN, y)
+    y += lh
+    font.draw(fb, "ᚠ ᚢ ᚦ 卢恩字母", MARGIN, y)
+    y += lh
+    font.draw(fb, "ก ข ค 泰文", MARGIN, y)
+    y += lh
+    font.draw(fb, "Ա Բ Գ 亚美尼亚文", MARGIN, y)
+    y += lh + 8
+    fb.hline(MARGIN, y - 4, WIDTH - 2 * MARGIN, 1)
+    font.draw(fb, "方框宽度跟随字符宽度，不会重叠。", MARGIN, y)
+    y += lh
+    font.draw(fb, "正常字符：中文 ABC 123 依旧对齐。", MARGIN, y)
+
+    ms = c.show("full")
+    print("[8 缺字] %d ms" % ms)
+    return ms
+
+
+def _paint_page(c, name):
+    fb = c.fb
+    font = c.font
+    lh = font.line_height
+    fb.fill(0)
+    y = title(c, "%s 波形测试" % name)
+    font.draw(fb, "春眠不觉晓，处处闻啼鸟。", MARGIN, y)
+    y += lh
+    font.draw(fb, "夜来风雨声，花落知多少。", MARGIN, y)
+    y += lh + 10
     for i in range(4):
-        fb.fill_rect(40 + i * 85, 130, 60, 60, 1)
-    draw_center(fb, "timing test", 210, 1, 1)
-    draw_center(fb, "watch ghosting / contrast", 230, 1, 1)
+        fb.fill_rect(MARGIN + i * 92, y, 72, 44, 1)
+    font.draw(fb, "观察对比度与残影", MARGIN, y + 56)
 
 
 def t_refresh(c, epd):
-    """对比 full / fast / partial 三种波形的耗时。"""
+    """⑨ 全刷 / 快刷 / 局刷 三种波形耗时对比。"""
     results = []
+    for name, pre, mode in (
+            ("全刷", lambda: epd.init(), "full"),
+            ("快刷", lambda: epd.init_fast(1.0), "fast"),
+            ("局刷", lambda: epd.init(), "partial")):
+        _paint_page(c, name)
+        pre()
+        ms = c.show(mode)
+        results.append((name, ms))
+        print("[9 刷新] %s = %d ms" % (name, ms))
+        time.sleep_ms(800)
 
-    # 全刷
-    _paint_refresh_frame(c.fb, "FULL", "init() -> display(mode='full')")
-    epd.init()
-    ms = c.show("full")
-    results.append(("full", ms))
-    print("[refresh] full    = %d ms" % ms)
-    time.sleep_ms(900)
-
-    # 快刷
-    _paint_refresh_frame(c.fb, "FAST", "init_fast(1.0) -> display('fast')")
-    epd.init_fast(1.0)
-    ms = c.show("fast")
-    results.append(("fast", ms))
-    print("[refresh] fast    = %d ms" % ms)
-    time.sleep_ms(900)
-
-    # 局部/快速波形
-    _paint_refresh_frame(c.fb, "PARTIAL", "init() -> display('partial')")
-    epd.init()
-    ms = c.show("partial")
-    results.append(("partial", ms))
-    print("[refresh] partial = %d ms" % ms)
-    time.sleep_ms(900)
-
-    # 结果汇总
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
-    fb.rect(0, 0, WIDTH, HEIGHT, 1)
-    draw_center(fb, "REFRESH TIME", 16, 1, 2)
-    fb.hline(30, 40, WIDTH - 60, 1)
-    y = 70
+    y = title(c, "8. 刷新波形耗时对比")
+    y += 8
     for name, ms in results:
-        fb.text("%-8s : %4d ms" % (name, ms), 70, y, 1)
-        # 条形图
-        w = min(220, ms * 220 // max(1, results[0][1]))
-        fb.fill_rect(170, y + 1, w, 6, 1)
-        y += 34
+        font.draw(fb, name, MARGIN, y)
+        s = "%d ms" % ms
+        font.draw(fb, s, 150 - font.text_width(s), y)
+        w = min(200, ms * 200 // max(1, results[0][1]))
+        fb.fill_rect(160, y + 5, w, 6, 1)
+        y += lh + 6
+    y += 6
+    font.draw(fb, "全刷：对比度最好，残影最少", MARGIN, y)
+    y += lh
+    font.draw(fb, "局刷：最快，但有残影，需定期全刷", MARGIN, y)
     epd.init()
     c.show("full")
     return results
 
 
 def t_partial(c, epd, seconds=12):
-    """局部刷新（计数器 + 进度条），验证残影表现。"""
+    """⑩ 局部刷新动态(中文计数 + 进度条)。"""
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
-    fb.rect(0, 0, WIDTH, HEIGHT, 1)
-    draw_center(fb, "PARTIAL UPDATE", 8, 1, 2)
-    fb.hline(20, 32, WIDTH - 40, 1)
-    fb.text("count:", 24, 60, 1)
-    fb.text("time :", 24, 180, 1)
-    fb.rect(20, 220, 360, 24, 1)
-    fb.text("(full refresh every 25 frames)", 24, 256, 1)
+    y = title(c, "9. 局部刷新 · 中文动态")
+
+    lab1 = "刷新次数："
+    lab2 = "已用时间："
+    font.draw(fb, lab1, MARGIN, y)
+    font.draw(fb, lab2, MARGIN, y + lh)
+    bar_y = y + 2 * lh + 8
+    fb.rect(MARGIN, bar_y, WIDTH - 2 * MARGIN, 14, 1)
+    font.draw(fb, "每 25 帧自动全刷一次，清除残影", MARGIN, HEIGHT - lh - 4)
 
     epd.init()
     c.show("full")
 
-    print("[partial] running %ds ..." % seconds)
+    x1 = MARGIN + font.text_width(lab1)
+    x2 = MARGIN + font.text_width(lab2)
     t0 = time.ticks_ms()
     end = time.ticks_add(t0, int(seconds * 1000))
     n = 0
     while time.ticks_diff(end, time.ticks_ms()) > 0:
-        elapsed = time.ticks_diff(time.ticks_ms(), t0)
-        ratio = elapsed / float(seconds * 1000)
+        el = time.ticks_diff(time.ticks_ms(), t0)
+        ratio = el / float(seconds * 1000)
         if ratio > 1.0:
             ratio = 1.0
 
-        # 清掉旧数字区域再画新的
-        fb.fill_rect(110, 50, 240, 56, 0)
-        draw_text(fb, "%d" % n, 120, 50, 1, 6)
+        fb.fill_rect(x1, y, 180, lh, 0)
+        font.draw(fb, "%d" % n, x1, y)
 
-        fb.fill_rect(110, 178, 160, 30, 0)
-        draw_text(fb, "%d.%ds" % (elapsed // 1000, (elapsed % 1000) // 100),
-                  120, 180, 1, 3)
+        fb.fill_rect(x2, y + lh, 180, lh, 0)
+        font.draw(fb, "%d.%d 秒" % (el // 1000, (el % 1000) // 100), x2, y + lh)
 
-        # 进度条
-        fb.fill_rect(21, 221, 358, 22, 0)
-        fb.fill_rect(21, 221, int(358 * ratio), 22, 1)
+        fb.fill_rect(MARGIN + 1, bar_y + 1, WIDTH - 2 * MARGIN - 2, 12, 0)
+        fb.fill_rect(MARGIN + 1, bar_y + 1,
+                     int((WIDTH - 2 * MARGIN - 2) * ratio), 12, 1)
 
         c.show("partial")
         n += 1
-
-        # 定期全刷，清掉累积残影
         if n % 25 == 0:
             epd.init()
             c.show("full")
 
-    print("[partial] %d frames in %ds" % (n, seconds))
+    print("[10 局刷] %d 帧 / %d 秒" % (n, seconds))
     return n
 
 
-def t_init_check(c, epd):
-    """对比 init() 与 init_min() 两种初始化参数的效果。"""
-    for name, fn in (("init (full SSD1619)", epd.init),
-                     ("init_min (Waveshare V2)", epd.init_min)):
-        fb = c.fb
-        fb.fill(0)
-        fb.rect(0, 0, WIDTH, HEIGHT, 1)
-        draw_center(fb, name, 24, 1, 2)
-        fb.hline(30, 60, WIDTH - 60, 1)
-        dither_rect(fb, 40, 90, 320, 60, 8)
-        draw_center(fb, "ABCDEFGHIJKLM", 170, 1, 3)
-        draw_center(fb, "0123456789 !@#$%", 210, 1, 1)
-        for i in range(6):
-            fb.fill_rect(40 + i * 55, 240, 40, 30, 1)
-        fn()
-        ms = c.show("full")
-        print("[init] %-24s = %d ms" % (name, ms))
-        time.sleep_ms(1500)
-    return None
-
-
 def t_done(c, epd):
+    """结束页。"""
     fb = c.fb
+    font = c.font
+    lh = font.line_height
     fb.fill(0)
     fb.rect(0, 0, WIDTH, HEIGHT, 1)
-    draw_center(fb, "ALL TESTS", 70, 1, 3)
-    draw_center(fb, "DONE", 110, 1, 3)
-    fb.hline(80, 150, WIDTH - 160, 1)
-    draw_center(fb, "if the screen looks correct,", 170, 1, 1)
-    draw_center(fb, "your wiring + driver are OK", 186, 1, 1)
-    fb.text("next: write your reader app :)", 60, 250, 1)
+    y = 66
+    center(c, "中文显示测试", y)
+    y += lh + 8
+    center(c, "全部完成", y)
+    y += lh + 12
+    fb.hline(90, y, WIDTH - 180, 1)
+    y += 14
+    center(c, "若以上中文显示均正常，", y)
+    y += lh
+    center(c, "说明字库、驱动与接线都正确。", y)
     epd.init()
     return c.show("full")
 
@@ -526,15 +525,15 @@ def make_spi():
         try:
             return SPI(sid, baudrate=SPI_BAUD, polarity=0, phase=0,
                        sck=Pin(PIN_SCK), mosi=Pin(PIN_MOSI))
-        except Exception as e:      # 该 SPI id 不可用就换下一个
+        except Exception as e:
             last = e
     raise last
 
 
 def setup():
-    """初始化 SPI + 驱动，返回 (epd, spi, canvas)。"""
+    """初始化 SPI + 驱动 + 字库, 返回 (epd, spi, canvas)。"""
     spi = make_spi()
-    epd = EPD(
+    epd = EPD_SSD1619(
         spi,
         Pin(PIN_CS, Pin.OUT),
         Pin(PIN_DC, Pin.OUT),
@@ -543,33 +542,46 @@ def setup():
     )
     print("init e-paper ...")
     epd.init()
-    c = Canvas(epd)
-    print("ready: %dx%d, row_bytes=%d" % (epd.width, epd.height, epd.row_bytes))
+
+    path = find_font()
+    if path is None:
+        raise OSError("找不到字库 unifont16.bin。"
+                      "请先在 PC 上运行 tools/build_font.py，再用 tools/upload.sh 上传")
+    print("load font: %s" % path)
+    font = Unifont(path)
+    print("font: cell=%d line_height=%d glyphs=%d (%s)"
+          % (font.cell_h, font.line_height,
+             len(font.misc) + font.cjk_count,
+             "panel" if font.panel else "natural"))
+
+    c = Canvas(epd, font)
     return epd, spi, c
 
 
 TESTS = (
-    ("info", t_info),
-    ("shapes", t_shapes),
-    ("font", t_font),
-    ("gray", t_gray),
+    ("basic", t_basic),
+    ("mixed", t_mixed),
+    ("punct", t_punct),
     ("align", t_align),
-    ("init", t_init_check),
+    ("wrap", t_wrap),
+    ("page", t_page),
+    ("invert", t_invert),
+    ("missing", t_missing),
     ("refresh", t_refresh),
     ("partial", t_partial),
     ("done", t_done),
 )
 
 
-def run_all(pause=1.2, do_sleep=False):
-    """依次跑完所有测试。pause=每步之间的停留秒数。"""
+def run_all(pause=1.0, do_sleep=False):
+    """依次跑完全部中文显示测试。pause=每步停留秒数。"""
     epd, spi, c = setup()
     for name, fn in TESTS:
         print("==== %s ====" % name)
         try:
             fn(c, epd)
         except Exception as e:
-            print("!! %s failed: %r" % (name, e))
+            print("!! %s 失败: %r" % (name, e))
         try:
             time.sleep(pause)
         except Exception:
@@ -577,18 +589,17 @@ def run_all(pause=1.2, do_sleep=False):
     if do_sleep:
         epd.sleep()
         print("e-paper sleeping")
-    print("run_all finished")
+    print("run_all 结束")
 
 
 def menu():
-    """交互式菜单，可在 REPL 里逐项测试。"""
+    """交互菜单, 可在 REPL 里逐项测试。"""
     epd, spi, c = setup()
-    names = [n for n, _ in TESTS]
     while True:
-        print("\n=== EPD Test Menu ===")
+        print("\n=== 中文显示测试菜单 ===")
         for i, (n, _) in enumerate(TESTS):
             print("  %d) %s" % (i + 1, n))
-        print("  q) quit")
+        print("  q) 退出")
         try:
             sel = input("select> ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -602,17 +613,13 @@ def menu():
                 hit = fn
                 break
         if hit is None:
-            print("invalid choice")
+            print("无效选择")
             continue
         try:
             hit(c, epd)
         except Exception as e:
-            print("!! failed: %r" % e)
+            print("!! 失败: %r" % e)
     print("bye")
-
-
-def sleep_now(epd):
-    epd.sleep()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# 墨水屏测试 Demo（ESP32-S3-N16R8 + SSD1619 4.2"）
+# 墨水屏中文显示测试（ESP32-S3-N16R8 + SSD1619 4.2"）
 
 ```
 阅读器/
@@ -147,23 +147,23 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 ```python
 import epd_test
 
-epd_test.run_all()          # 依次跑完所有测试（约 40 秒）
-epd_test.run_all(do_sleep=True)   # 跑完让屏幕休眠省电
-
-epd_test.menu()             # 交互菜单，逐项测试
+epd_test.run_all()                # 依次跑完全部中文显示测试（约 30 秒）
+epd_test.run_all(do_sleep=True)   # 跑完让屏休眠省电
+epd_test.menu()                   # 交互菜单，逐项测试
 ```
 
-直接跑文件（跑完自动执行 `run_all()`）：
+直接跑（跑完自动执行 `run_all()`）：
 
 ```bash
-mpremote connect /dev/ttyACM0 run epd_test.py
+mpremote connect /dev/ttyACM0 exec "import epd_test; epd_test.run_all()"
+# 或: mpremote connect /dev/ttyACM0 run epd_test.py
 ```
 
 单项测试也可以手动调：
 
 ```python
 epd, spi, c = epd_test.setup()
-epd_test.t_shapes(c, epd)
+epd_test.t_page(c, epd)
 epd_test.t_partial(c, epd, seconds=20)
 ```
 
@@ -252,16 +252,20 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 
 ## 5. 测试项说明
 
-| 名称 | 内容 | 能看出什么问题 |
+全部测试都围绕**中文显示**，每一项标题栏都顺带验证了“黑底白字”反白。
+
+| 名称 | 内容 | 关注点 |
 |---|---|---|
-| `info` | 引脚/固件/内存信息、黑白色块、棋盘格 | 接线是否正确、SPI 是否通 |
-| `shapes` | 线、矩形、实心矩形、椭圆、反白文字 | 基本绘图是否正常 |
-| `font` | 全部 ASCII（8×8）、x2/x3/x4 放大、反白 | 字体渲染与放大 |
-| `gray` | 4×4 Bayer 抖动的“灰度”渐变和灰阶块 | 抖动效果、对比度 |
-| `align` | 边框、四角标记、中心十字、10px 网格 | 有没有 1px 偏移 / 裁切 |
-| `init` | `init()` 与 `init_min()` 两种初始化对比 | 哪一种在你板子上背景更干净 |
-| `refresh` | full / fast / partial 三种波形耗时对比 | 刷新速度与残影 |
-| `partial` | 局部刷新计数器 + 进度条 | 局刷是否可用、残影累积速度 |
+| `basic` | 中文基础渲染：标题栏 + 居中诗 + 字号/行数信息 | 字库是否加载、行高、每行字数 |
+| `mixed` | 中英数混排 + 基线参考线 | ASCII(8px)/汉字(16px) 步进与基线对齐 |
+| `punct` | 中文标点、引号括号、全角符号、箭头数学、货币 | 标点与全角字符是否都在字库内 |
+| `align` | 左 / 中 / 右 对齐 + 边界参考线 | `text_width()` 计算是否正确 |
+| `wrap` | 长段自动折行（`draw_wrapped`） | 折行点、行距、中英混排是否整齐 |
+| `page` | 模拟阅读器整页：状态栏 + 正文 + 底栏 | 真实阅读界面布局 |
+| `invert` | 白字黑底、选中条、进度条 | 反白（`ink=0`）是否正确 |
+| `missing` | 字库外字符（扩展 A / 卢恩 / 泰文 / 亚美尼亚文） | 缺字方框宽度自适应、不重叠 |
+| `refresh` | 全刷 / 快刷 / 局刷 波形耗时对比 | 刷新速度与残影 |
+| `partial` | 局刷动态：中文计数 + 进度条 | 局刷是否可用、残影累积速度 |
 | `done` | 结束页 | — |
 
 刷新模式用法（与驱动对应）：
@@ -289,18 +293,24 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 **花屏 / 雪花 / 只显示噪点**
 - 确认屏幕是 400×300 的 SSD1619/UC8151D 4.2"；分辨率不对会错位。
-- 先跑 `t_init_check`，换 `init_min()` 试试。
+- 在 REPL 里换另一种初始化试试：`epd.init_min()` 然后 `c.show()`。
 - 降低 `SPI_BAUD`（4 MHz→2 MHz），杜邦线太长/接触不良时很有效。
 
 **整屏纯白或纯黑不动**
 - 确认 `VCC=3.3V`、`GND` 共地。
-- 看 `t_info` 是否弹出，若卡在 `epd.init()` 多半是 BUSY 或 RST 问题。
+- 启动时看 `setup()` 的打印：卡在 `init e-paper ...` 多半是 BUSY 或 RST 问题；
+  卡在 `load font` 则是字库没上传。
 
 **画面上下/左右颠倒**
 - 驱动里的 Data Entry Mode / X、Y 窗口是按 400×300 整帧写的。若需要翻转，在 `display()` 前把 `buf` 旋转 180°（可用 `framebuf` 的 `fb.scroll` 变通或自己做映射）。
 
-**报 `ImportError: can't import epd_ssd1619`**
-- 驱动没上传成功。用 `mpremote connect PORT fs ls` 看一下，或把驱动放设备根目录。
+**报 `ImportError: can't import epd_ssd1619` / `unifont`**
+- 驱动/字库模块没上传成功。用 `mpremote connect PORT fs tree :` 看一下，
+  应存在 `/library/epd_ssd1619.py` 与 `/library/unifont.py`。
+
+**报 `OSError: 找不到字库 unifont16.bin`**
+- 字库还没生成或没上传。先在 PC 上：`python3 tools/build_font.py`，
+  再 `tools/upload.sh`，设备上应存在 `/fonts/unifont16.bin`。
 
 **想省电**
 - 显示完调 `epd.sleep()`，再次显示时 `c.show(...)` 会自动重新初始化。
@@ -309,7 +319,15 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 ## 7. 后续做阅读器
 
-这个 Demo 的 `Canvas.draw_text / dither_rect` 可以直接复用到阅读器界面：
-- 分页/翻页：全刷 `full`，翻页之间的小变化用 `partial`。
-- 正文排版：先用 8×8 或自备点阵字库算好换行，再整帧送显。
-- 需要中文就要加字库（例如 16×16 点阵字库，或把字模存到 PSRAM/flash 里按需取）。
+本 Demo 已经把做阅读器需要的两块基础铺好了：
+
+- **字库与排版**：`library/unifont.py` 提供 `text_width / draw / draw_char / draw_wrapped`，
+  定长 32 B 字形 + `framebuf.blit`（C 层），一页几十毫秒。
+- **画布与刷新**：`Canvas`（`1=墨, 0=底`，送显时整帧取反）+ `full / fast / partial` 三种波形。
+
+下一步可以直接在其上搭：
+
+- **整页缓存**：把渲染好的整页（15 KB）存进 PSRAM，翻页只做一次取反 + 送显，
+  渲染成本几乎为零，瓶颈只剩墨水屏刷新本身。
+- **分页索引**：书签、跳章、进度条。
+- **插件接口**：`/plugins/<name>/main.py` + `register(api)`；插件商店走 MicroPython 自带 `mip`。

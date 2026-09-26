@@ -78,15 +78,20 @@ class Unifont:
         self._missing = self._make_missing()
 
     # ---------------------------------------------------------------- 查询
-    def _make_missing(self):
-        """缺字占位: 一个空心方框(位值与字库语义保持一致)。"""
+    def _make_box(self, x, w):
+        """生成一个空心方框字形(位值与字库语义保持一致)。"""
         c = bytearray(GLYPH_BYTES)
         fb = framebuf.FrameBuffer(c, CELL_W, self.cell_h, framebuf.MONO_HLSB)
-        fb.rect(1, 3, CELL_W - 2, self.cell_h - 6, 1)
+        fb.rect(x, 3, w, self.cell_h - 6, 1)
         if self.panel:                   # panel 字库: 墨点应为 0
             for i in range(GLYPH_BYTES):
                 c[i] ^= 0xFF
         return bytes(c)
+
+    def _make_missing(self):
+        """缺字占位: 宽度跟随 advance, 避免相邻缺字方框重叠。"""
+        self._miss_half = self._make_box(0, CELL_W // 2)
+        self._miss_full = self._make_box(1, CELL_W - 2)
 
     def lookup(self, cp):
         """返回 (bitmap_offset 或 None, advance)。"""
@@ -116,7 +121,10 @@ class Unifont:
             self._gfb = framebuf.FrameBuffer(
                 self._cell, CELL_W, self.cell_h, framebuf.MONO_HLSB)
         off, adv = self.lookup(cp)
-        raw = self._missing if off is None else self._mv[off:off + GLYPH_BYTES]
+        if off is None:
+            raw = self._miss_full if adv == self.full_adv else self._miss_half
+        else:
+            raw = self._mv[off:off + GLYPH_BYTES]
         if self.font_ink != ink:
             cell = self._cell
             for i in range(GLYPH_BYTES):
