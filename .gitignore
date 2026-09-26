@@ -1,0 +1,13 @@
+# Python 缓存 / 编译产物
+__pycache__/
+*.py[cod]
+*.mpy
+
+# 编辑器 / 系统垃圾
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# 固件 / 生成的字体等二进制产物(可随时重新下载或生成)
+*.bin
