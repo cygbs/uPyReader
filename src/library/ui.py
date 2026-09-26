@@ -37,6 +37,13 @@ class Canvas:
         self.epd.display(self.to_panel(), mode=mode)
         return time.ticks_diff(time.ticks_ms(), t0)
 
+    def show_rect(self, x, y, w, h):
+        """窗口局部刷新: 只驱动 (x,y,w,h) 这块区域, 返回耗时(ms)。
+        比 show('partial') 快得多 —— 后者会把整屏都驱动一遍。"""
+        t0 = time.ticks_ms()
+        self.epd.display_partial_rect(self.to_panel(), x, y, w, h)
+        return time.ticks_diff(time.ticks_ms(), t0)
+
 
 # --------------------------------------------------------------------------- #
 # 文本

@@ -151,12 +151,47 @@ def build_hints():
 
 
 def draw_main(c, index, hints):
-    # 必须先清屏: 局刷只刷新变化像素, 否则旧的选中项反白条会残留
+    # 必须先清屏: 只刷新局部窗口, 否则旧的选中项反白条会残留在缓冲区里
     # (framebuf.fill 是 C 层实现, 15000 字节开销可忽略)
     c.fb.fill(0)
     ui.title_bar(c, "阅读器主菜单", APP_VERSION)
     ui.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints)
-    ui.draw_footer(c, FOOT_HINT, "%d/%d" % (index + 1, len(MENU)))
+    # 底部提示保持静态(不放会变化的计数), 这样移动光标时只需刷新列表那两行
+    ui.draw_footer(c, FOOT_HINT)
+
+
+def item_band(i):
+    """第 i 项占据的 y 区间(半开)。"""
+    y0 = LIST_TOP + i * ROW_H
+    return (y0, y0 + ROW_H)
+
+
+def footer_band(c):
+    lh = c.font.line_height
+    return (c.height - lh - 12, c.height)
+
+
+def refresh_bands(c, bands):
+    """把脏区 y 区间合并后做一次窗口局部刷新。返回刷新的窗口数(总是 1)。
+
+    先合并相邻区间(光标移一格 -> 两个相邻行合并成一条, 只驱动 ~2 行高度);
+    如果还有不相邻的区间(例如从最后一项回绕到第一项), 再合并成一个大窗口 ——
+    因为局部波形的一次激活耗时基本固定, 一次扫完比分两次激活更快。
+    """
+    bs = sorted(b for b in bands if b and b[1] > b[0])
+    if not bs:
+        return 0
+    merged = []
+    for y0, y1 in bs:
+        if merged and y0 <= merged[-1][1]:
+            if y1 > merged[-1][1]:
+                merged[-1][1] = y1
+        else:
+            merged.append([y0, y1])
+    if len(merged) > 1:
+        merged = [[merged[0][0], merged[-1][1]]]
+    c.show_rect(0, merged[0][0], c.width, merged[0][1] - merged[0][0])
+    return 1
 
 
 # --------------------------------------------------------------------------- #
@@ -180,34 +215,38 @@ def main():
         while True:
             enc.update()
 
-            # ---- 旋转: 移动光标 ----
+            # ---- 旋转: 移动光标(只刷新受影响的那两行) ----
             d = enc.take_steps()
             if d:
+                old = index
                 index = (index + d) % len(MENU)
                 draw_main(c, index, hints)
-                toast_until = 0
-                partial_n += 1
+                bands = [item_band(old), item_band(index)]
+                if toast_until:
+                    bands.append(footer_band(c))     # 顺带把提示恢复掉
+                    toast_until = 0
+                partial_n += refresh_bands(c, bands)
                 if partial_n >= PARTIAL_LIMIT:       # 定期全刷清残影
                     partial_n = 0
                     c.show("full")
-                else:
-                    c.show("partial")
 
             # ---- 按键 ----
             ev = enc.take_events()
             if ev & CLICK:
                 ui.draw_footer(c, "已选择：%s" % MENU[index][0], "子页面待实现")
-                c.show("partial")
+                y0, y1 = footer_band(c)
+                c.show_rect(0, y0, c.width, y1 - y0)
                 toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
             elif ev & LONG:
                 ui.draw_footer(c, "长按(暂未使用)", "返回")
-                c.show("partial")
+                y0, y1 = footer_band(c)
+                c.show_rect(0, y0, c.width, y1 - y0)
                 toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
 
-            # ---- 提示超时后恢复 ----
+            # ---- 提示超时后只恢复底部那一小条 ----
             if toast_until and time.ticks_diff(time.ticks_ms(), toast_until) >= 0:
                 draw_main(c, index, hints)
-                c.show("partial")
+                refresh_bands(c, [footer_band(c)])
                 toast_until = 0
 
             time.sleep_ms(5)
