@@ -3,13 +3,18 @@
 ```
 阅读器/
 ├── README.md                   # 本文档
-├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入）
-├── src/                        # 只放 MicroPython 源码；其下顶级条目会原样映射到设备根目录
+├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入；*.bin 不入库）
+├── src/                        # 只放 MicroPython 源码 → 设备根目录
 │   ├── epd_test.py             # 测试 Demo
 │   └── library/
-│       └── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
-└── tools/
-    └── upload.sh               # 一键把 src/ 全部同步到设备（PC 侧工具）
+│       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
+│       └── unifont.py          # UFB1 位图字库读取 + 渲染
+├── assets/                     # 资源 → 设备根目录
+│   └── fonts/
+│       └── unifont16.bin       # 生成物，不入库（由 tools/build_font.py 生成）
+└── tools/                      # PC 侧工具
+    ├── upload.sh               # 一键同步 src/ + assets/ 到设备
+    └── build_font.py           # Unifont .hex → UFB1 二进制字库
 ```
 
 对应到设备上的布局：
@@ -17,8 +22,11 @@
 ```
 /                 (设备根目录)
 ├── epd_test.py
-└── library/
-    └── epd_ssd1619.py
+├── library/
+│   ├── epd_ssd1619.py
+│   └── unifont.py
+└── fonts/
+    └── unifont16.bin
 ```
 
 - 屏幕：HINK-E042A13-A0 4.2" 400×300 黑白，控制芯片 SSD1619（或 UC8151D，指令同族）
@@ -65,8 +73,8 @@ uv tool install mpremote
 
 ### 一键上传（推荐）
 
-`tools/upload.sh` 会把 `src/` 下的**所有**源码（含子目录）同步到设备根目录，
-默认按 sha256 跳过未改动文件：
+`tools/upload.sh` 会把 `src/`（源码）和 `assets/`（资源）下的**所有**顶层条目
+同步到设备根目录，默认按 sha256 跳过未改动文件：
 
 ```bash
 cd /home/ygbs/下载/阅读器
@@ -98,8 +106,9 @@ RUN=1 tools/upload.sh                        # 传完就跑测试 Demo
 CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
 ```
 
-路径映射规则：`src/` 的每个顶层条目原样落到设备根，例如
-`src/library/epd_ssd1619.py` → `/library/epd_ssd1619.py`。
+路径映射规则：`src/` 和 `assets/` 的每个顶层条目都原样落到设备根，例如
+`src/library/epd_ssd1619.py` → `/library/epd_ssd1619.py`，
+`assets/fonts/unifont16.bin` → `/fonts/unifont16.bin`。
 
 > 实现细节：脚本用 `mpremote cp -r ... :.`（远端当前目录）而不是 `:`。
 > 因为 `mpremote` 对 `:` 是否“已存在”的判断依赖 `os.stat("")`，行为不稳；
@@ -160,7 +169,88 @@ epd_test.t_partial(c, epd, seconds=20)
 
 ---
 
-## 4. 测试项说明
+## 4. 字库方案：Unifont 16×16 → UFB1 二进制
+
+### 为什么这么选
+
+- **Unifont 本身就是 1-bit 位图**（ASCII 8×16、CJK 16×16），`.hex` 源里一个 bit 就是
+  一个像素 → **PC 侧零光栅化、像素零误差**，也不需要任何字体库依赖。
+- **完整覆盖 BMP**，含全部 CJK 基本区（U+4E00–U+9FFF，20992 字）。
+- **授权友好**：自 13.0.04 起双许可 = **SIL OFL 1.1** 与 **GPL-2.0+（字体嵌入例外）**，
+  嵌入进固件没问题（走 OFL 最省事，见 `LICENSES/`）。
+- **设备侧只做“查表 + `framebuf.blit`”**，不解析 hex、不碰 TTF。
+
+### 生成
+
+```bash
+# 首次会自动下载官方 unifont_all-18.0.01.hex.gz（1.6 MB）到 tools/.cache/
+python3 tools/build_font.py -o assets/fonts/unifont16.bin --preview /tmp/preview.bmp
+```
+
+可选参数：
+
+| 参数 | 作用 |
+|---|---|
+| `--charset book.txt` | 只收录该文本里出现的字符，体积可大幅减小 |
+| `--ranges "0x20-0x7e,0x4e00-0x9fff"` | 自定义码点范围 |
+| `--panel` | 生成反相版（1=白底），配合 panel 语义画布可兔送显取反 |
+| `--preview out.bmp` | 从**生成后的文件读回**渲染预览图，顺带验证格式与偏移 |
+| `--line-gap N` | 行间距（默认 2） |
+
+默认输出（全部 BMP 常用字）：**22,630 字形 / 726 KB**
+
+### 文件格式 UFB1
+
+```
+Header 32B: magic'UFB1' ver flags cell_h=16 baseline=14 half_adv=8 \
+            full_adv=16 line_gap cjk_first cjk_count cjk_off misc_count misc_off
+misc 索引表: misc_count × 12B (u32 codepoint, u32 glyph_off, u32 advance)
+CJK 位图区: cjk_count × 32B   ← 索引 = cp - cjk_first，O(1)
+misc 位图区: misc_count × 32B
+```
+
+每个字形定长 **16×16 = 32 字节**（MONO_HLSB，MSB=最左像素）；ASCII 左对齐、
+`advance=8`，CJK `advance=16`。定长 → 直接 blit，无分支。
+默认 **natural 语义（1=墨）**；`--panel` 则整体反相。
+
+### 设备端使用
+
+```python
+import framebuf
+from unifont import Unifont
+
+font = Unifont("/fonts/unifont16.bin")
+buf = bytearray(400 * 300 // 8)
+fb = framebuf.FrameBuffer(buf, 400, 300, framebuf.MONO_HLSB)
+fb.fill(0)                                       # 1=墨，0=底
+font.draw(fb, "春眠不觉晓，处处闻啼鸟。", 8, 16)   # 默认 ink=1
+font.draw(fb, "反白", 8, 60, ink=0)              # 在已填 1 的实心块上画浅字
+font.draw_wrapped(fb, long_text, 8, 90, 392)      # 自动折行，返回下一行 y
+print(font.text_width("你好world"), font.line_height)
+```
+
+### 尺寸与排版参考
+
+| 内容 | 字形数 | 体积 |
+|---|---|---|
+| 默认（ASCII + 拉丁 + 标点 + 全角 + CJK 基本区） | 22,630 | **726 KB** |
+| 仅 CJK 基本区 | 20,992 | 656 KB |
+| ASCII + 拉丁 + 标点（约） | ~1,600 | ~50 KB |
+
+- 行高 = `cell_h + line_gap` = 16 + 2 = **18 px**；
+- 400×300 屏幕：**25 个汉字/行 × 16 行**。
+- 一页 800 字 ≈ 几十 ms（定长 32B + C 层 blit）；实际瓶颈是墨水屏刷新本身。
+- 字库整体读进内存（726 KB，落 PSRAM），之后无文件 IO。
+
+### 授权
+
+GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项目按 SIL OFL 1.1 使用，
+许可文本见 `LICENSES/OFL-1.1.txt`，出处 <https://unifoundry.com/unifont/>。
+分发时请一并附带许可与出处。
+
+---
+
+## 5. 测试项说明
 
 | 名称 | 内容 | 能看出什么问题 |
 |---|---|---|
@@ -191,7 +281,7 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 ---
 
-## 5. 排错
+## 6. 排错
 
 **一直 `e-Paper busy timeout`**
 - 检查 BUSY 接线和 GPIO 号。SSD1619 是 **高电平=忙**；个别 UC8151D 模块是低电平忙，若你的模块是反的，把驱动 `_wait_busy()` 里的判断改成 `== 0`。
@@ -217,7 +307,7 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 ---
 
-## 6. 后续做阅读器
+## 7. 后续做阅读器
 
 这个 Demo 的 `Canvas.draw_text / dither_rect` 可以直接复用到阅读器界面：
 - 分页/翻页：全刷 `full`，翻页之间的小变化用 `partial`。

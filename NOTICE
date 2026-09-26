@@ -1,0 +1,17 @@
+本仓库的位图字库数据由 tools/build_font.py 从 GNU Unifont 的 .hex 源生成。
+
+--------------------------------------------------------------------------
+GNU Unifont
+Copyright (C) 1998-2025 Roman Czyborra, Paul Hardy, Qianqian Fang,
+Andrew Miller, Johnnie Weaver, David Corbett, Nils Moskopp,
+Rebecca Bettencourt, Ho-Seok Ee, et al.
+
+Dual-licensed:
+  * SIL Open Font License, Version 1.1   —— 见 LICENSES/OFL-1.1.txt
+  * GNU GPL v2 or later, with the GNU Font Embedding Exception
+
+来源: https://unifoundry.com/unifont/
+       https://ftp.gnu.org/gnu/unifont/
+
+本项目按 SIL OFL 1.1 使用该字体。分发时请一并附带上述许可与出处。
+--------------------------------------------------------------------------

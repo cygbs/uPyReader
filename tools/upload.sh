@@ -13,12 +13,14 @@
 #
 # 目录约定:
 #   仓库根/
-#     ├── src/           ← 只放 MicroPython 源码；其下的顶层条目会原样映射到设备根
+#     ├── src/           ← 只放 MicroPython 源码；其下顶层条目原样映射到设备根
+#     ├── assets/        ← 资源文件(可选)；其下顶层条目也映射到设备根
 #     ├── tools/         ← 本脚本等 PC 侧工具
 #     └── README.md
 #
 #   例: src/library/epd_ssd1619.py  ->  设备 /library/epd_ssd1619.py
 #       src/epd_test.py             ->  设备 /epd_test.py
+#       assets/fonts/unifont16.bin  ->  设备 /fonts/unifont16.bin
 #
 # 依赖: mpremote  (uv tool install mpremote  或  python3 -m pip install --user mpremote)
 #
@@ -33,6 +35,7 @@ CHMOD="${CHMOD:-1}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO/src"
+ASSETS="$REPO/assets"
 DEST=":."          # 远端当前目录（设备根）。注意用 ":.",不要用 ":",原因见下方注释
 
 # ----------------------------------------------------------------------------
@@ -64,24 +67,32 @@ fi
 find "$SRC" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
 find "$SRC" -type f -name '*.pyc' -delete 2>/dev/null || true
 
-# ---- 收集 src/ 下的顶层条目（文件 + 目录）----------------------------------
-ENTRIES=()
-while IFS= read -r -d '' e; do
-    base="$(basename "$e")"
-    case "$base" in
-        .DS_Store|Thumbs.db|*.pyc) continue ;;
-    esac
-    ENTRIES+=("$e")
-done < <(find "$SRC" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+# ---- 收集上传条目 -----------------------------------------------------------
+#   src/    -> 设备根目录（源码）
+#   assets/ -> 设备根目录（资源，如 assets/fonts/unifont16.bin -> /fonts/unifont16.bin）
+ROOTS=("$SRC")
+if [ -d "$ASSETS" ]; then
+    ROOTS+=("$ASSETS")
+fi
 
-[ "${#ENTRIES[@]}" -gt 0 ] || die "src/ 是空的，没有可上传的代码"
+ENTRIES=()
+for root in "${ROOTS[@]}"; do
+    while IFS= read -r -d '' e; do
+        base="$(basename "$e")"
+        case "$base" in
+            .*|*.md|Thumbs.db|*.pyc|__pycache__) continue ;;
+        esac
+        ENTRIES+=("$e")
+    done < <(find "$root" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+done
+
+[ "${#ENTRIES[@]}" -gt 0 ] || die "src/ 和 assets/ 都是空的，没有可上传的内容"
 
 echo ">> 仓库   : $REPO"
-echo ">> 源目录 : $SRC"
 echo ">> 目标   : $PORT  (设备根目录 /)"
 echo ">> 待上传 :"
 for e in "${ENTRIES[@]}"; do
-    echo "     ${e#"$SRC"/}"
+    echo "     ${e#"$REPO"/}"
 done
 
 # ---- 可选：先清理远端对应目录 ----------------------------------------------

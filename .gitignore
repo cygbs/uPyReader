@@ -11,3 +11,6 @@ Thumbs.db
 
 # 固件 / 生成的字体等二进制产物(可随时重新下载或生成)
 *.bin
+
+# build_font.py 下载的 Unifont 源缓存
+tools/.cache/
