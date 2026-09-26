@@ -1,12 +1,16 @@
-# 墨水屏中文显示测试（ESP32-S3-N16R8 + SSD1619 4.2"）
+# 墨水屏阅读器（ESP32-S3-N16R8 + SSD1619 4.2"）
 
 ```
 阅读器/
 ├── README.md                   # 本文档
 ├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入；*.bin 不入库）
 ├── src/                        # 只放 MicroPython 源码 → 设备根目录
-│   ├── epd_test.py             # 测试 Demo
+│   ├── main.py                 # ★ 主界面（开机自动运行）
+│   ├── epd_test.py             # 中文显示测试（独立诊断工具）
 │   └── library/
+│       ├── hwconfig.py         # ★ 引脚/硬件参数的唯一配置源
+│       ├── ui.py               # 画布 + 文本对齐 + 列表菜单
+│       ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
 │       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
 │       └── unifont.py          # UFB1 位图字库读取 + 渲染
 ├── assets/                     # 资源 → 设备根目录
@@ -21,8 +25,12 @@
 
 ```
 /                 (设备根目录)
+├── main.py                   ← 开机自动运行：主界面
 ├── epd_test.py
 ├── library/
+│   ├── hwconfig.py
+│   ├── ui.py
+│   ├── rotary.py
 │   ├── epd_ssd1619.py
 │   └── unifont.py
 └── fonts/
@@ -51,13 +59,32 @@
 | `RES` | 复位 (RST) | GPIO **8** | `PIN_RST` |
 | `BUSY` | 忙信号 | GPIO **7** | `PIN_BUSY` |
 
-默认引脚定义在 `epd_test.py` 顶部的“接线配置”区，**请按实际接线修改**。
+**所有引脚都集中在 `src/library/hwconfig.py`** —— 改接線只改那一个文件。
+`main.py` 和 `epd_test.py` 都从它读；`epd_test.py` 找不到时会退回内置默认值，
+所以它仍然可以单独运行。
+
+### 旋转编码器（增量式，带按键）
+
+模块丝印 `GND S1 S2 KEY 5V`，接法：
+
+| 编码器丝印 | 含义 | 默认接到 | 变量 |
+|---|---|---|---|
+| `5V` | 电源（**接 3V3 即可**） | 3V3 | — |
+| `GND` | 地 | GND | — |
+| `S1` | 正交 A 相 | GPIO **4** | `ENC_A` |
+| `S2` | 正交 B 相 | GPIO **5** | `ENC_B` |
+| `KEY` | 按下时与 GND 接通（低有效） | GPIO **6** | `ENC_KEY` |
+
+- 三个脚都启用**内部上拉**；模块自带 10k 上拉也没影响。
+- 手感不对（转一格跳太多/太少）→ 用 `main.encoder_debug()` 校准 `ENC_STEPS_PER_DETENT`。
 
 注意：
 - `SDI` = MOSI（ESP32 输出数据给屏幕），`SCLK` = 时钟。屏是只写设备，
   **没有 MISO / 回读引脚**，SPI 只初始化 `sck` + `mosi` 即可（代码已如此）。
 - 屏幕是 3.3 V 供电，**不要接 5 V**。
-- ESP32-S3-N16R8 上 **GPIO 26–32 被内部 Flash / Octal PSRAM 占用，不要用**；GPIO 19/20 是 USB，43/44 是 UART0，也尽量避开。上面这组引脚都是安全的。
+- 这些 GPIO 要避开：**7–12**（墨水屏）、**19/20**（USB）、**26–37**（内部 Flash /
+  Octal-PSRAM，N16R8 的 R8 用掉 33–37）、**39–42**（JTAG）、**43/44**（UART0）、
+  **0/3/45/46**（strapping）。上面默认用到的引脚都是安全的。
 - BUSY 需要能读到高电平；如果一直“busy timeout”，见下面排错。
 
 ---
@@ -102,7 +129,7 @@ tools/upload.sh /dev/ttyUSB0     # 指定串口
 
 ```bash
 FORCE=1 tools/upload.sh                      # 全量重传
-RUN=1 tools/upload.sh                        # 传完就跑测试 Demo
+RUN=1 tools/upload.sh                        # 传完就跑中文显示测试
 CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
 ```
 
@@ -140,7 +167,46 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 
 ---
 
-## 3. 运行
+## 3. 运行与主界面
+
+### 主界面（开机自动运行）
+
+`src/main.py` 上传到设备根目录后，MicroPython **开机自动执行 `main.py`**，
+上电即进主菜单：
+
+```
+┌ 阅读器主菜单 ─────────────────── v0.1 ┐
+│ ▶ 继续阅读                  无记录   │  ← 选中项整行反白 + ▶
+│   浏览文件                内部存储   │
+│   关于本机          ESP32-S3-N16R8   │
+│   固件设置              MicroPython  │
+│   插件                        0 个   │
+├─────────────────────────────────────┤
+│ 旋转选择   按下确认              1/5 │
+└─────────────────────────────────────┘
+```
+
+操作：
+
+| 动作 | 效果 |
+|---|---|
+| 旋转编码器 | 上下移动选中项（循环，首尾相接） |
+| 按下按键 | 底部提示「已选择：xxx · 子页面待实现」，1.5 s 后恢复 |
+| 长按 | 预留给「返回」（当前未使用） |
+
+- 光标移动走**局刷**（`partial`），连续移动 15 次后自动插一次全刷清残影。
+- **子页面尚未实现**：目前按下去只做视觉反馈，不会进入下一层界面。
+- `main.py` 是死循环；要回 REPL 按 `Ctrl-C`，脚本会优雅退出并让屏休眠。
+
+REPL 辅助：
+
+```python
+import main
+main.main()             # 重新进入主界面
+main.encoder_debug()    # 编码器自检：校准 ENC_STEPS_PER_DETENT / 确认接线
+```
+
+### 中文显示测试（独立诊断工具）
 
 在 REPL 里：
 
@@ -319,7 +385,7 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 ## 7. 后续做阅读器
 
-本 Demo 已经把做阅读器需要的两块基础铺好了：
+现在的代码已经把做阅读器需要的两块基础铺好了：
 
 - **字库与排版**：`library/unifont.py` 提供 `text_width / draw / draw_char / draw_wrapped`，
   定长 32 B 字形 + `framebuf.blit`（C 层），一页几十毫秒。

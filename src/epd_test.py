@@ -31,42 +31,7 @@ except ImportError:                      # 在 PC 上做语法检查时会走到
 
 
 # ===========================================================================
-# ① 接线配置 —— 请按实际接线修改
-# ===========================================================================
-#   屏幕丝印   含义                接到 ESP32-S3-N16R8    本文件变量
-#   --------   ----------------    -------------------    ----------
-#   3V3        电源 3.3V           3V3                    (切勿接 5V!)
-#   GND        地                  GND                    --
-#   SCLK       时钟 (CLK)          GPIO12                 PIN_SCK
-#   SDI        SPI 数据 (MOSI)     GPIO11                 PIN_MOSI
-#   CS         片选                GPIO10                 PIN_CS
-#   D/C        数据/命令选择 (DC)  GPIO9                  PIN_DC
-#   RES        复位 (RST)          GPIO8                  PIN_RST
-#   BUSY       忙信号              GPIO7                  PIN_BUSY
-# ===========================================================================
-PIN_SCK  = 12
-PIN_MOSI = 11
-PIN_CS   = 10
-PIN_DC   = 9
-PIN_RST  = 8
-PIN_BUSY = 7
-SPI_ID   = 1
-SPI_BAUD = 4_000_000
-
-WIDTH  = 400
-HEIGHT = 300
-MARGIN = 12
-
-# 字库候选路径(设备上 assets/fonts/* -> /fonts/*)
-FONT_CANDIDATES = (
-    "/fonts/unifont16.bin",
-    "fonts/unifont16.bin",
-    "assets/fonts/unifont16.bin",
-)
-
-
-# ===========================================================================
-# ② 导入驱动与字库(兼容 library/ 放设备根目录、/lib 或脚本同级)
+# ① 让 library/ 里的模块可导入(兼容设备根目录、/lib、脚本同级)
 # ===========================================================================
 def _setup_path():
     here = ""
@@ -74,11 +39,7 @@ def _setup_path():
         here = __file__.rsplit("/", 1)[0]
     except Exception:
         pass
-    cands = []
-    if here:
-        cands += [here, here + "/library"]
-    cands += ["library", "/library", "/lib"]
-    for p in cands:
+    for p in (here, here + "/library", "library", "/library", "/lib"):
         try:
             if p and p not in sys.path:
                 sys.path.append(p)
@@ -88,6 +49,33 @@ def _setup_path():
 
 _setup_path()
 
+
+# ===========================================================================
+# ② 硬件配置
+#   优先读 library/hwconfig.py(接线的唯一配置源, 与 main.py 共用);
+#   找不到时退回下面内置默认值 —— 本文件是可独立运行的诊断工具。
+# ===========================================================================
+try:
+    from hwconfig import (
+        EPD_SCK as PIN_SCK, EPD_MOSI as PIN_MOSI, EPD_CS as PIN_CS,
+        EPD_DC as PIN_DC, EPD_RST as PIN_RST, EPD_BUSY as PIN_BUSY,
+        EPD_SPI_ID as SPI_ID, EPD_SPI_BAUD as SPI_BAUD,
+        WIDTH, HEIGHT, FONT_CANDIDATES,
+    )
+except ImportError:
+    PIN_SCK, PIN_MOSI, PIN_CS = 12, 11, 10
+    PIN_DC, PIN_RST, PIN_BUSY = 9, 8, 7
+    SPI_ID, SPI_BAUD = 1, 4_000_000
+    WIDTH, HEIGHT = 400, 300
+    FONT_CANDIDATES = (
+        "/fonts/unifont16.bin",
+        "fonts/unifont16.bin",
+        "assets/fonts/unifont16.bin",
+    )
+
+MARGIN = 12
+
+# 驱动与字库
 try:
     from epd_ssd1619 import EPD_SSD1619
 except ImportError:
