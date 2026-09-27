@@ -21,7 +21,7 @@
 #     ├── tools/         ← 本脚本等 PC 侧工具
 #     └── README.md
 #
-#   例: src/library/epd_ssd1619.py  ->  设备 /library/epd_ssd1619.py
+#   例: src/driver/epd_ssd1619.py  ->  设备 /driver/epd_ssd1619.py
 #       src/main.py                 ->  设备 /main.py
 #       assets/fonts/unifont16.bin  ->  设备 /fonts/unifont16.bin
 #
@@ -48,7 +48,7 @@ DEST=":."          # 远端当前目录（设备根）。注意用 ":.",不要�
 #   mpremote 的 `cp -r` 目标若不存在，会把源目录的内容直接铺到目标；
 #   而 ":" 是否被判定为"已存在"依赖 os.stat("")，行为不稳。
 #   ":.（当前目录）"必定存在，且语义是"复制进该目录"，因此可反复执行不会
-#   产生 library/library 这种嵌套。
+#   产生 driver/driver 这种嵌套。
 # ----------------------------------------------------------------------------
 
 die() { echo "错误: $*" >&2; exit 1; }

@@ -11,7 +11,7 @@
 #
 # 用法:
 #   import framebuf
-#   from unifont import Unifont
+#   from ui.unifont import Unifont
 #
 #   font = Unifont("/fonts/unifont16.bin")
 #   buf = bytearray(400 * 300 // 8)

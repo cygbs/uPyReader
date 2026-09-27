@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-# ui.py
+# canvas.py
 # 通用 UI 小工具: 画布 + 文本对齐 + 竖向列表菜单
 #
 # 画布语义: 1 = 墨(黑), 0 = 底(白); 字库默认也是 natural(1=墨)。
 # 送显时统一整帧取反为大整数 XOR(C 层), 比逐字节 Python 循环快得多。
+# 局刷 LUT 见 driver/epdlut.py。
 
 import time
 import framebuf
@@ -42,7 +43,7 @@ class Canvas:
 
     def show_lut(self, lut):
         """用自定义 LUT 局刷送显(不闪), 返回耗时(ms)。
-        lut 见 epdlut.py。"""
+        lut 见 driver/epdlut.py。"""
         t0 = time.ticks_ms()
         panel = self.to_panel()
         self.epd.display_lut(panel, lut, self._prev_panel)

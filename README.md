@@ -6,16 +6,17 @@
 ├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入；*.bin 不入库）
 ├── src/                        # 只放 MicroPython 源码 → 设备根目录
 │   ├── main.py                 # ★ 主界面（开机自动运行）
-│   └── library/
-│       ├── hwconfig.py         # ★ 引脚/硬件参数的唯一配置源
-│       ├── ui.py               # 画布 + 文本对齐 + 列表菜单 + 信息页
-│       ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
-│       ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
+│   ├── driver/                 # 硬件层：配置 + 驱动
+│   │   ├── hwconfig.py         # ★ 引脚/硬件参数的唯一配置源
+│   │   ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
+│   │   ├── epdlut.py           # 从面板 OTP 读波形并裁成不闪的局刷 LUT
+│   │   ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
+│   │   └── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
+│   └── ui/                     # 绘制层：画布 + 页面
+│       ├── canvas.py           # 画布 + 文本对齐 + 列表菜单 + 信息页
+│       ├── unifont.py          # UFB1 位图字库读取 + 渲染
 │       ├── about.py            # “关于本机”页面
-│       ├── reader.py           # 小说浏览 / 分页 / 阅读进度
-│       ├── epdlut.py           # 从面板 OTP 读波形并裁成不闪的局刷 LUT
-│       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
-│       └── unifont.py          # UFB1 位图字库读取 + 渲染
+│       └── reader.py           # 小说浏览 / 分页 / 阅读进度
 ├── assets/                     # 资源 → 设备根目录
 │   └── fonts/
 │       └── unifont16.bin       # 生成物，不入库（由 tools/build_font.py 生成）
@@ -30,17 +31,23 @@
 ```
 /                 (设备根目录)
 ├── main.py                   ← 开机自动运行：主界面
-├── library/
+├── driver/                   # 硬件层（Python 包）
 │   ├── hwconfig.py
-│   ├── ui.py
-│   ├── rotary.py
-│   ├── sysinfo.py
-│   ├── about.py
 │   ├── epd_ssd1619.py
-│   └── unifont.py
+│   ├── epdlut.py
+│   ├── rotary.py
+│   └── sysinfo.py
+├── ui/                       # 绘制层（Python 包）
+│   ├── canvas.py
+│   ├── unifont.py
+│   ├── about.py
+│   └── reader.py
 └── fonts/
     └── unifont16.bin
 ```
+
+- `driver/`、`ui/` 是 Python 包（各含一个 `__init__.py`）；导入写作
+  `from driver import epdlut`、`from ui import canvas`。
 
 - 屏幕：HINK-E042A13-A0 4.2" 400×300 黑白，控制芯片 SSD1619（或 UC8151D，指令同族）
 - 主控：ESP32-S3-N16R8，固件 `ESP32_GENERIC_S3-SPIRAM_OCT-...bin`（已刷好）
@@ -64,7 +71,7 @@
 | `RES` | 复位 (RST) | GPIO **8** | `PIN_RST` |
 | `BUSY` | 忙信号 | GPIO **7** | `PIN_BUSY` |
 
-**所有引脚都集中在 `src/library/hwconfig.py`** —— 改接线只改那一个文件，
+**所有引脚都集中在 `src/driver/hwconfig.py`** —— 改接线只改那一个文件，
 `main.py` 从它读。
 
 ### 旋转编码器（增量式，带按键）
@@ -140,12 +147,12 @@ CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
 ```
 
 路径映射规则：`src/` 和 `assets/` 的每个顶层条目都原样落到设备根，例如
-`src/library/epd_ssd1619.py` → `/library/epd_ssd1619.py`，
+`src/driver/epd_ssd1619.py` → `/driver/epd_ssd1619.py`，
 `assets/fonts/unifont16.bin` → `/fonts/unifont16.bin`。
 
 > 实现细节：脚本用 `mpremote cp -r ... :.`（远端当前目录）而不是 `:`。
 > 因为 `mpremote` 对 `:` 是否“已存在”的判断依赖 `os.stat("")`，行为不稳；
-> `:.` 语义明确，且反复执行不会产生 `library/library` 这种嵌套。
+> `:.` 语义明确，且反复执行不会产生 `driver/driver` 这种嵌套。
 
 ### 手动命令（等价做法）
 
@@ -166,10 +173,11 @@ mpremote connect $PORT exec "import main; main.main()"
 ### Thonny
 
 打开 Thonny → 右下角解释器选 `MicroPython (ESP32)` + 端口 → 在“文件”面板把
-`src/library/epd_ssd1619.py` 上传到设备的 `/library`，把 `src/main.py` 上传到设备根目录，
+`src/driver/epd_ssd1619.py` 上传到设备的 `/driver`，把 `src/main.py` 上传到设备根目录，
 然后点运行。
 
-> Demo 里的导入逻辑会依次尝试：当前目录 → `library/` → `/library` → `/lib`，放哪都能找到。
+> Demo 里的导入逻辑会把 `src/` 根（设备上即 `/`）加入 `sys.path`，因此
+> `driver/`、`ui/` 两个包无论从哪运行都能被找到。
 
 ---
 
@@ -221,7 +229,7 @@ mpremote connect $PORT exec "import main; main.main()"
 └─────────────────────────────────────┘
 ```
 
-数据来源见 `library/sysinfo.py`：**Flash** 由自动创建的 `vfs` 分区末端推断，
+数据来源见 `driver/sysinfo.py`：**Flash** 由自动创建的 `vfs` 分区末端推断，
 **PSRAM** 取 IDF 堆区里最大的一块。
 
 - 光标移动/翻页统一走**自裁局刷 LUT**送显：**不闪**，约 2.1s；**每 8 次**
@@ -269,7 +277,7 @@ SYNC_BOOKS=1 CHMOD=0 tools/upload.sh   # 上传代码 + 小说(小说大, 传输
 | 按下 | 保存进度并返回主界面 |
 | 长按 | 同上（返回主界面） |
 
-分页与进度由 `library/reader.py` 负责：
+分页与进度由 `ui/reader.py` 负责：
 
 - 按**字节偏移**分页：每页从上次位置 `seek` 读一小块（4 KB），逐字排版，
   记下下一页的字节起点；**不把整本书读进内存**。
@@ -353,7 +361,7 @@ misc 位图区: misc_count × 32B
 
 ```python
 import framebuf
-from unifont import Unifont
+from ui.unifont import Unifont
 
 font = Unifont("/fonts/unifont16.bin")
 buf = bytearray(400 * 300 // 8)
@@ -410,9 +418,9 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 - 字发虚说明局刷波形驱动不足，调大 `PARTIAL_REP`（更“实”、更慢）。
 - 不同批次模组的 OTP 波形可能不同，必要时试 `epd.init_min()` 重新初始化。
 
-**报 `ImportError: can't import epd_ssd1619` / `unifont`**
+**报 `ImportError: can't import driver.epd_ssd1619` / `ui.unifont`**
 - 驱动/字库模块没上传成功。用 `mpremote connect PORT fs tree :` 看一下，
-  应存在 `/library/epd_ssd1619.py` 与 `/library/unifont.py`。
+  应存在 `/driver/epd_ssd1619.py` 与 `/ui/unifont.py`。
 
 **报 `OSError: 找不到字库 unifont16.bin`**
 - 字库还没生成或没上传。先在 PC 上：`python3 tools/build_font.py`，

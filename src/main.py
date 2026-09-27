@@ -3,7 +3,7 @@
 main.py — 墨水屏阅读器 主界面(设备开机自动运行)
 
 硬件: ESP32-S3-N16R8 + SSD1619 4.2" 400x300 + 增量式旋转编码器
-接线: 见 library/hwconfig.py
+接线: 见 driver/hwconfig.py
 
 操作:
     主界面/文件列表  旋转 = 选择, 按下 = 确认, 长按 = 返回
@@ -11,7 +11,7 @@ main.py — 墨水屏阅读器 主界面(设备开机自动运行)
                      每翻一页都会把阅读位置写进 Flash, 下次自动续读
 
 翻页/移动光标用"自裁局刷 LUT"送显(不闪), 每 FULL_EVERY 次插一次全刷清残影;
-局刷 LUT 的来历见 library/epdlut.py。
+局刷 LUT 的来历见 driver/epdlut.py。
 
 REPL 辅助:
     import main; main.encoder_debug()    # 校准编码器手感 / 确认接线
@@ -25,36 +25,34 @@ from machine import Pin
 
 
 # --------------------------------------------------------------------------- #
-# 路径: 让 library/ 里的模块可导入
+# 路径: 让 driver/ 与 ui/ 两个包可导入
 # --------------------------------------------------------------------------- #
 def _setup_path():
+    """把 src/ 根加入 sys.path, 使 driver/ 与 ui/ 两个包可导入。"""
     here = ""
     try:
-        here = __file__.rsplit("/", 1)[0]
+        here = os.path.dirname(__file__)
     except Exception:
         pass
-    for p in (here, here + "/library", "library", "/library", "/lib"):
-        try:
-            if p and p not in sys.path:
+    for p in (here, "/", "src"):
+        if p and p not in sys.path:
+            try:
                 sys.path.append(p)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
 
 _setup_path()
 
-from hwconfig import (
+from driver.hwconfig import (
     EPD_CS, EPD_DC, EPD_RST, EPD_BUSY, FONT_CANDIDATES,
     ENC_A, ENC_B, ENC_KEY, ENC_STEPS_PER_DETENT, ENC_LONG_MS,
 )
-from epd_ssd1619 import EPD_SSD1619
-from unifont import Unifont
-from rotary import Rotary, CLICK, LONG
-import epdlut
-import ui
-import sysinfo
-import about
-import reader
+from driver.epd_ssd1619 import EPD_SSD1619
+from driver.rotary import Rotary, CLICK, LONG
+from driver import epdlut, sysinfo
+from ui.unifont import Unifont
+from ui import about, canvas, reader
 
 
 APP_VERSION = "v0.2"
@@ -163,7 +161,7 @@ def setup():
     print("font: %s (%d 字形, 行高 %d)"
           % (path, len(font.misc) + font.cjk_count, font.line_height))
 
-    return epd, ui.Canvas(epd, font)
+    return epd, canvas.Canvas(epd, font)
 
 
 # --------------------------------------------------------------------------- #
@@ -197,27 +195,27 @@ def build_hints():
 
 def draw_main(c, index, hints):
     c.fb.fill(0)
-    ui.title_bar(c, "阅读器主菜单", APP_VERSION)
-    ui.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints)
-    ui.draw_footer(c, FOOT_HINT)
+    canvas.title_bar(c, "阅读器主菜单", APP_VERSION)
+    canvas.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints)
+    canvas.draw_footer(c, FOOT_HINT)
 
 
 def draw_files(c, books, index, scroll):
     c.fb.fill(0)
-    ui.title_bar(c, "浏览文件", "%d 本" % len(books))
+    canvas.title_bar(c, "浏览文件", "%d 本" % len(books))
     if books:
         vis = books[scroll:scroll + FILE_ROWS]
-        ui.draw_list(c, [n.rsplit("/", 1)[-1] for n, _ in vis], index - scroll,
-                     LIST_TOP, ROW_H, [sysinfo.fmt_size(s) for _, s in vis])
+        canvas.draw_list(c, [n.rsplit("/", 1)[-1] for n, _ in vis], index - scroll,
+                         LIST_TOP, ROW_H, [sysinfo.fmt_size(s) for _, s in vis])
     else:
         lh = c.font.line_height
-        ui.text_center(c, "没有找到 .txt 文件", 120)
-        ui.text_center(c, "把小说放到 /books/ 目录", 120 + lh + 4)
-    ui.draw_footer(c, FILE_HINT)
+        canvas.text_center(c, "没有找到 .txt 文件", 120)
+        canvas.text_center(c, "把小说放到 /books/ 目录", 120 + lh + 4)
+    canvas.draw_footer(c, FILE_HINT)
 
 
 def show_toast(c, left, right=None):
-    ui.draw_footer(c, left, right)
+    canvas.draw_footer(c, left, right)
     show_partial(c)
 
 

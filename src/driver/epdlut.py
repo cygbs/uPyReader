@@ -8,13 +8,13 @@
 # 初始化面板。
 #
 # 用法:
-#   import epdlut
+#   from driver import epdlut
 #   lut = epdlut.load(epd, rep=8)      # 76 字节局刷 LUT; 失败返回 None
-#   canvas.show_lut(lut)               # 用这张 LUT 送显(见 ui.Canvas)
+#   canvas.show_lut(lut)               # 用这张 LUT 送显(见 ui/canvas.py)
 
 import time
 from machine import Pin, SPI
-from hwconfig import EPD_SCK, EPD_MOSI, EPD_SPI_ID, EPD_SPI_BAUD
+from driver.hwconfig import EPD_SCK, EPD_MOSI, EPD_SPI_ID, EPD_SPI_BAUD
 
 READ_BYTES = 97          # 0x33 一次多读几个字节; 7 字节 LUT 实为 76
 LUT_BYTES = 76

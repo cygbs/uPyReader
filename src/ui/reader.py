@@ -12,14 +12,14 @@
 #     只保留有限条, 所以 JSON 不会无限变大。每次翻页都会写盘, 断电/重启后仍从原处继续。
 #
 # 用法:
-#   import reader
+#   from ui import reader
 #   books = reader.list_books()              # [(相对路径, 字节大小), ...]
 #   b = reader.Book(books[0][0], canvas)     # 打开(自动定位到上次位置)
 #   b.next_page(); reader.draw(canvas, b)    # 翻页 + 渲染
 
 import os
 import json
-import ui
+from ui import canvas
 
 BOOKS_DIR = "/books"
 STATE_DIR = "/books/.state"
@@ -28,7 +28,7 @@ STATE_FILE = STATE_DIR + "/progress.json"
 READ_CHUNK = 4096          # 每次从文件读取的字节数
 TXT_EXT = ".txt"
 HIST = 128                 # 每条进度只保留最近 N 页的起点(限制写盘开销/寿命)
-_SKIP_DIRS = ("library", "fonts", "tools", "assets", ".state")
+_SKIP_DIRS = ("driver", "ui", "fonts", "tools", "assets", ".state")
 
 
 # --------------------------------------------------------------------------- #
@@ -323,7 +323,7 @@ def draw(c, book):
     lh = c.font.line_height
     title = book.name.rsplit("/", 1)[-1]
     right = "第%d页 %d%%" % (book.page_no(), book.progress())
-    ui.title_bar(c, title, right)
+    canvas.title_bar(c, title, right)
 
     y = book.body_top
     for line in book.lines:

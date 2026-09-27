@@ -3,8 +3,8 @@
 #
 # 显示: 芯片 / 模块 / 固件 / 主频 / Flash / PSRAM / MAC
 
-import ui
-import sysinfo
+from driver import sysinfo
+from ui import canvas
 
 FOOTER = "按下或长按返回"
 
@@ -25,7 +25,7 @@ def draw(c, rows=None):
     if rows is None:
         rows = build_rows()
     c.fb.fill(0)
-    y = ui.title_bar(c, "关于本机") + 4
-    ui.draw_kv(c, rows, y)
-    ui.draw_footer(c, FOOTER)
+    y = canvas.title_bar(c, "关于本机") + 4
+    canvas.draw_kv(c, rows, y)
+    canvas.draw_footer(c, FOOTER)
     return rows
