@@ -61,6 +61,7 @@ LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
 FILE_ROWS = 5            # 文件列表一屏显示行数
 PARTIAL_LIMIT = 15       # 连续局刷多少次后插一次全刷(清残影)
+FULL_EVERY = 5           # 阅读时每翻多少页插一次全刷(其余页用不闪的局部波形)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"
@@ -298,6 +299,7 @@ def main():
     book_i = 0
     book_scroll = 0
     book = None
+    page_turns = 0
 
     draw_main(c, index, hints)
     ms = c.show("full")
@@ -340,6 +342,7 @@ def main():
                         b = open_continue(c)
                         if b is not None:
                             book = b
+                            page_turns = 0
                             screen = "reader"
                         else:
                             toast_until = time.ticks_add(
@@ -385,6 +388,7 @@ def main():
                         b = open_book(c, books[book_i][0])
                         if b is not None:
                             book = b
+                            page_turns = 0
                             screen = "reader"
                 elif ev & LONG:
                     screen = "menu"
@@ -395,7 +399,8 @@ def main():
             elif screen == "reader" and book is not None:
                 # ---- 旋转: 翻页(向前/向后); 每翻一页都会存进度 ----
                 if d:
-                    changed = False
+                    turned = 0
+                    prev_turns = page_turns
                     n = abs(d)
                     if n > 5:
                         n = 5
@@ -406,10 +411,15 @@ def main():
                         else:
                             if not book.prev_page():
                                 break
-                        changed = True
-                    if changed:
+                        turned += 1
+                    if turned:
                         reader.draw(c, book)
-                        c.show("full")
+                        page_turns += turned
+                        # 平时用局部波形: 不闪、快; 每 FULL_EVERY 页全刷一次清残影
+                        if page_turns // FULL_EVERY != prev_turns // FULL_EVERY:
+                            c.show("full")
+                        else:
+                            c.show("partial")
 
                 # ---- 按下: 保存进度并回到主界面 ----
                 if ev & (CLICK | LONG):
