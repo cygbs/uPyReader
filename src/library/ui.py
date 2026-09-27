@@ -44,6 +44,13 @@ class Canvas:
         self.epd.display_partial_rect(self.to_panel(), x, y, w, h)
         return time.ticks_diff(time.ticks_ms(), t0)
 
+    def show_lut(self, lut):
+        """用自定义 LUT 送显(局刷/快刷波形), 返回耗时(ms)。
+        lut 见 epd.display_lut()。"""
+        t0 = time.ticks_ms()
+        self.epd.display_lut(self.to_panel(), lut)
+        return time.ticks_diff(time.ticks_ms(), t0)
+
 
 # --------------------------------------------------------------------------- #
 # 文本

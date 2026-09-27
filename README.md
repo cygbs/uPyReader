@@ -281,6 +281,23 @@ SYNC_BOOKS=1 CHMOD=0 tools/upload.sh   # 上传代码 + 小说(小说大, 传输
 - 只保留有限条历史（`HIST=128`），JSON 恒定 ~1 KB，写盘约几十毫秒，
   既快又省 Flash 寿命。
 
+### 不闪的翻页（局刷 LUT）
+
+这块屏的 OTP 里只烧了「全刷」波形（实测无论用 `0xF7/0xC7/0xFF` 哪个模式都要
+~3.5s 且整屏闪），所以普通模式翻页一定会闪。真正的无闪翻页是这样做的：
+
+1. 启动时用 **bit-bang** 在单线 `SDI` 上把面板 OTP 的波形表（`0x33`）读回来
+   （SSD1619 的 4 线 SPI 是半双工，同一根线可读，不用额外接线）；
+2. 把它裁成「单阶段」短波形：只留第 3 组的阶段时间，`repeat` 设为
+   `PARTIAL_REP=8`（越大字越“实”、越慢）；
+3. 翻页时用 `0x32` 写回这张 LUT，再用 **`0x22=0xCF`**（`MODE1|MODE2`，
+   **不带 `LOAD_LUT`**，否则会被 OTP 覆盖）触发。
+
+效果：翻页 ~2.5s、**不闪**、字很实，只有文字本身在轻微变化。普通页用局刷，
+**每 `FULL_EVERY=8` 页**用 OTP 全刷一次清残影。相关代码：
+`main.read_otp_lut() / main.make_partial_lut()`、`epd.display_lut()`、
+`Canvas.show_lut()`。
+
 REPL 辅助：
 
 ```python

@@ -255,6 +255,32 @@ class EPD_SSD1619:
         self._write_ram(buf)
         self._refresh(mode)
 
+    def _write_lut(self, lut):
+        """把自定义波形表写进 LUT 寄存器(0x32)。"""
+        self._cmd(0x32)
+        self.dc.value(1)
+        self.cs.value(0)
+        self.spi.write(lut)
+        self.cs.value(1)
+
+    def display_lut(self, buf, lut):
+        """用自定义 LUT 送显(局刷/快刷波形)。
+
+        lut 通常是启动时从面板 OTP 读回、再裁短的 76 字节波形(见 main.read_lut)。
+        0x22 用 0xCF(MODE1|MODE2, 不 LOAD_LUT) —— 若带 LOAD_LUT(0xF7) 会用 OTP
+        波形把刚写进去的自定义 LUT 覆盖掉。
+        """
+        if self._hibernated:
+            self.init()
+        self._write_lut(lut)
+        self._set_window(0, 0, self.width - 1, self.height - 1)
+        self._cmd(0x24)                            # WRITE RAM
+        self._write_ram(buf)
+        self._cmd(0x22)
+        self._data(0xCF)
+        self._cmd(0x20)
+        self._wait_busy()
+
     def display_partial_rect(self, buf, x, y, w, h):
         """窗口局部刷新: 只写、只驱动 (x, y, w, h) 这块矩形, 其余像素不动。
         buf 仍然是整帧缓冲; x 会对齐到 8 的倍数。

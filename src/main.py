@@ -60,8 +60,9 @@ APP_VERSION = "v0.2"
 LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
 FILE_ROWS = 5            # 文件列表一屏显示行数
-PARTIAL_LIMIT = 15       # 连续局刷多少次后插一次全刷(清残影)
-FULL_EVERY = 5           # 阅读时每翻多少页插一次全刷(其余页用不闪的局部波形)
+PARTIAL_LIMIT = 15       # 菜单连续局刷多少次后插一次全刷(清残影)
+FULL_EVERY = 8           # 阅读时每翻多少页插一次全刷(其余页用不闪的局刷 LUT)
+PARTIAL_REP = 8          # 局刷波形里第 3 组的重复次数(越大字越"实", 越慢)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"
@@ -174,6 +175,96 @@ def setup():
           % (path, len(font.misc) + font.cjk_count, font.line_height))
 
     return epd, spi, ui.Canvas(epd, font)
+
+
+# --------------------------------------------------------------------------- #
+# 局刷 LUT: 从面板 OTP 读回全刷波形, 裁成单阶段短波形
+# --------------------------------------------------------------------------- #
+def read_otp_lut(epd, n=97):
+    """从面板 OTP 读回 LUT 寄存器(命令 0x33)。
+
+    SSD1619 的 4 线 SPI 是半双工、只有一根数据线(SDI), 所以先释放 SPI 外设,
+    再用 bit-bang 在 SDI 上把 76/97 字节的波形读回来。读完后自动重建 SPI 并
+    重新初始化面板。失败返回 None。
+    """
+    try:
+        epd.spi.deinit()
+    except Exception:
+        pass
+
+    sck = Pin(EPD_SCK, Pin.OUT, value=0)
+    sdi = Pin(EPD_MOSI, Pin.OUT, value=1)
+    cs = epd.cs
+    dc = epd.dc
+
+    def tx(b):
+        for i in range(7, -1, -1):
+            sdi.value((b >> i) & 1)
+            sck.value(1)
+            time.sleep_us(2)
+            sck.value(0)
+            time.sleep_us(2)
+
+    out = None
+    try:
+        cs.value(0)
+        dc.value(0)
+        tx(0x33)
+        dc.value(1)
+        sdi.init(Pin.IN, Pin.PULL_UP)
+        out = bytearray()
+        for _ in range(n):
+            v = 0
+            for _i in range(8):
+                sck.value(1)
+                time.sleep_us(2)
+                v = (v << 1) | sdi.value()
+                sck.value(0)
+                time.sleep_us(2)
+            out.append(v)
+        cs.value(1)
+    except Exception as e:
+        print("读 OTP LUT 失败:", e)
+    finally:
+        try:
+            sdi.init(Pin.OUT)
+        except Exception:
+            pass
+        try:
+            epd.spi = make_spi()
+            epd.init()
+        except Exception as e:
+            print("恢复 SPI / 面板失败:", e)
+
+    if out is None:
+        return None
+    out = bytes(out)
+    if out[:4] in (b"\x00\x00\x00\x00", b"\xff\xff\xff\xff"):
+        return None
+    return out
+
+
+def make_partial_lut(otp, rep=PARTIAL_REP):
+    """把 OTP 全刷波形裁成单阶段局刷波形(不闪)。
+
+    只保留第 3 组的阶段时间 tp, 其余组的 tp/repeat 全部清 0; 第 3 组的 repeat
+    设成 rep —— 实测这块屏 rep=8 时字已经很实, 约 2.1s, 且不闪。
+    """
+    if not otp or len(otp) < 76:
+        return None
+    lut = bytearray(otp[:76])
+    g = 35
+    for gi in range(7):
+        base = g + gi * 5
+        if gi == 3:
+            lut[base + 4] = rep
+        else:
+            lut[base + 0] = 0
+            lut[base + 1] = 0
+            lut[base + 2] = 0
+            lut[base + 3] = 0
+            lut[base + 4] = 0
+    return bytes(lut)
 
 
 # --------------------------------------------------------------------------- #
@@ -291,6 +382,14 @@ def main():
     epd, spi, c = setup()
     enc = Rotary(ENC_A, ENC_B, ENC_KEY,
                  steps_per_detent=ENC_STEPS_PER_DETENT, long_ms=ENC_LONG_MS)
+
+    # 读一次面板 OTP 波形并裁成局刷 LUT(失败则退化为全刷)
+    otp_lut = read_otp_lut(epd)
+    partial_lut = make_partial_lut(otp_lut)
+    if partial_lut is None:
+        print("未能取得局刷 LUT, 翻页将使用全刷")
+    else:
+        print("局刷 LUT 就绪 (OTP %d 字节, g3 repeat=%d)" % (len(otp_lut), PARTIAL_REP))
 
     hints = build_hints()
     index = 0
@@ -416,10 +515,11 @@ def main():
                         reader.draw(c, book)
                         page_turns += turned
                         # 平时用局部波形: 不闪、快; 每 FULL_EVERY 页全刷一次清残影
-                        if page_turns // FULL_EVERY != prev_turns // FULL_EVERY:
+                        if partial_lut is None or \
+                                page_turns // FULL_EVERY != prev_turns // FULL_EVERY:
                             c.show("full")
                         else:
-                            c.show("partial")
+                            c.show_lut(partial_lut)
 
                 # ---- 按下: 保存进度并回到主界面 ----
                 if ev & (CLICK | LONG):
