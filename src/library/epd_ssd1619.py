@@ -313,7 +313,7 @@ class EPD_SSD1619:
         if mode == 'fast':
             self._data(0xC7)                       # 快速刷新波形
         elif mode == 'partial':
-            self._data(0xFF)                       # 局部刷新波形
+            self._data(0xF8)                       # MODE2: 硬件快刷/局刷波形(快且不闪)
         else:
             self._data(0xF7)                       # 全屏刷新波形（默认）
         self._cmd(0x20)                            # Master Activation

@@ -82,9 +82,18 @@ def title_bar(c, text, right_text=None):
 # --------------------------------------------------------------------------- #
 # 竖向列表菜单
 # --------------------------------------------------------------------------- #
+def dashed_hline(fb, x, y, w, dash=4, gap=4, color=1):
+    """虚线: 比实线像素更少, 而且送显后局刷时变化区域更小。"""
+    end = x + w
+    while x < end:
+        n = dash if x + dash <= end else end - x
+        fb.hline(x, y, n, color)
+        x += dash + gap
+
+
 def draw_list(c, items, index, top, row_h, hints=None,
               marker="\u25b6", left=6, indent=44, right_pad=16):
-    """通用竖向列表: 选中项整行反白并带 marker, 右侧 hint 右对齐, 行间细分隔线。
+    """通用竖向列表: 选中项用方框框住并带 marker, 右侧 hint 右对齐, 行间虚分隔线。
 
     items: 字符串序列
     hints: 与 items 等长的右侧说明(可为 None)
@@ -96,16 +105,18 @@ def draw_list(c, items, index, top, row_h, hints=None,
         y = top + i * row_h
         hint = None if hints is None else hints[i]
         if i == index:
-            fb.fill_rect(left, y, c.width - 2 * left, row_h - 6, 1)
-            font.draw(fb, marker, left + 8, y + ty, ink=0)
-            font.draw(fb, title, indent, y + ty, ink=0)
+            # 选中项: 只画一圈方框(不用整行反白黑块), 变化像素少很多
+            fb.rect(left, y, c.width - 2 * left, row_h - 6, 1)
+            font.draw(fb, marker, left + 8, y + ty)
+            font.draw(fb, title, indent, y + ty)
             if hint:
-                text_right(c, hint, c.width - right_pad, y + ty, ink=0)
+                text_right(c, hint, c.width - right_pad, y + ty)
         else:
             font.draw(fb, title, indent, y + ty)
             if hint:
                 text_right(c, hint, c.width - right_pad, y + ty)
-            fb.hline(left + 12, y + row_h - 6, c.width - 2 * left - 24, 1)
+            dashed_hline(fb, left + 12, y + row_h - 6,
+                         c.width - 2 * left - 24)
 
 
 def draw_footer(c, left_text, right_text=None):
