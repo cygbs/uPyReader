@@ -3,10 +3,19 @@
 #
 # 显示: 芯片 / 模块 / 固件 / 主频 / Flash / PSRAM / MAC
 
-from driver import sysinfo
+from driver import sdcard, sysinfo
 from ui import canvas
 
 FOOTER = "按下或长按返回"
+
+
+def _sd_value():
+    if not sdcard.is_mounted():
+        return "未挂载"
+    u = sdcard.usage()
+    if not u:
+        return "已挂载"
+    return "%s (可用 %s)" % (sysinfo.fmt_size(u[0]), sysinfo.fmt_size(u[1]))
 
 
 def build_rows():
@@ -17,6 +26,7 @@ def build_rows():
         ("主频", "%d MHz" % sysinfo.freq_mhz()),
         ("Flash", sysinfo.fmt_size(sysinfo.flash_size())),
         ("PSRAM", sysinfo.fmt_size(sysinfo.psram_size())),
+        ("TF 卡", _sd_value()),
         ("MAC", sysinfo.mac()),
     )
 

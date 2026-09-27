@@ -6,4 +6,6 @@
     epdlut.py         从面板 OTP 读波形并裁成不闪的局刷 LUT
     rotary.py         增量式旋转编码器(含按键)驱动
     sysinfo.py        芯片/Flash/PSRAM/MAC 等系统信息
+    sdspi.py          纯 Python SPI 模式 SD/TF 卡驱动(micropython-lib)
+    sdcard.py         把 TF 卡(FAT32/MBR) 挂到 /sd + 诊断
 """

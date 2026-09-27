@@ -11,7 +11,9 @@ MPReader/
 │   │   ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
 │   │   ├── epdlut.py           # 从面板 OTP 读波形并裁成不闪的局刷 LUT
 │   │   ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
-│   │   └── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
+│   │   ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
+│   │   ├── sdspi.py            # 纯 Python SPI TF 卡驱动（micropython-lib）
+│   │   └── sdcard.py           # 挂载 TF 卡到 /sd + 诊断
 │   └── ui/                     # 绘制层：画布 + 页面
 │       ├── canvas.py           # 画布 + 文本对齐 + 列表菜单 + 信息页
 │       ├── unifont.py          # UFB1 位图字库读取 + 渲染
@@ -37,7 +39,9 @@ MPReader/
 │   ├── epd_ssd1619.py
 │   ├── epdlut.py
 │   ├── rotary.py
-│   └── sysinfo.py
+│   ├── sysinfo.py
+│   ├── sdspi.py
+│   └── sdcard.py
 ├── ui/                       # 绘制层（Python 包）
 │   ├── canvas.py
 │   ├── unifont.py
@@ -261,6 +265,34 @@ mpremote connect $PORT exec "import main; main.main()"
 
 改完立即生效（局刷深度会即时重裁 LUT），重开机也保持，不必改代码。
 
+### 用 TF 卡放书（microSD，可选）
+
+除了设备内部 Flash，也可以把书放 TF 卡（SPI 模式，**FAT32 + MBR 分区表**）。
+卡上的书会被「浏览文件」自动列出来，路径形如 `/sd/books/xxx.txt`。
+
+引脚（见 `driver/hwconfig.py`；屏幕占 `SPI(1)`，TF 卡单独用 `SPI(2)`）：
+
+| 模块丝印 | 含义 | GPIO | `hwconfig` |
+|---|---|---|---|
+| SCK/CLK | 时钟 | 13 | `SD_SCK` |
+| MOSI/DI(SI) | 数据出 | 17 | `SD_MOSI` |
+| MISO/DO(SO) | 数据入 | 15 | `SD_MISO` |
+| CS | 片选 | 16 | `SD_CS` |
+
+> ⚠️ 带 AMS1117/电平转换的模块 **VCC 接 5V** 才能稳住 3.3V（压差大）；
+> 裸 3.3V 模块接 3V3。信号脚一律 3.3V。
+
+启动时自动挂到 `/sd`，日志会打印 `TF 卡: 已挂载 …`；没插卡也不影响使用。
+卡读不到时在 REPL 跑诊断（会逐项打印 MISO 空闲电平、原始 CMD0、各频率尝试）：
+
+```python
+import main; main.sd_debug()
+```
+
+驱动优先用 micropython-lib 的纯 Python `sdspi.py`（走 `SPI(2)`，不占用屏幕那路
+SPI，且每一步失败都会抛出具体原因）；不行时再回退到固件内置的 `machine.SDCard`。
+阅读进度仍存在**设备内部**的 `/books/.state/progress.json`，所以拔卡/换卡进度不丢。
+
 ### 阅读小说（浏览文件 / 继续阅读）
 
 把 `.txt` 小说放进设备的 `/books/` 目录（`tools/upload.sh` 会自动把仓库
@@ -448,6 +480,16 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 **报 `OSError: 找不到字库 unifont16.bin`**
 - 字库还没生成或没上传。先在 PC 上：`python3 tools/build_font.py`，
   再 `tools/upload.sh`，设备上应存在 `/fonts/unifont16.bin`。
+
+**TF 卡读不到 / 挂载失败**
+- 先在 REPL 跑诊断：`import main; main.sd_debug()`。它会打印 **MISO 空闲电平**、
+  **原始 CMD0 应答**（全 `0xFF` = 卡完全没反应）和各频率的尝试结果，直接定位是哪一步。
+- 最常见的是 **MOSI/MISO 接反**（模块常标 `DI`/`DO` 或 `SI`/`SO`）：把 MOSI 与
+  MISO 对调再试。
+- 带 AMS1117/电平转换的模块 **VCC 要接 5V**，3.3V 供电不稳会读到全 `0xFF`。
+- 卡可能锁在 SD 模式：整板断电一次再上电。
+- 卡要是 **FAT32 + MBR**（PC 上“格式化为 FAT32”即可），启动日志会有
+  `TF 卡: 已挂载 /sd …`，卡上的 `books/` 会被「浏览文件」自动列出。
 
 **想省电**
 - 显示完调 `epd.sleep()`，再次显示时 `c.show()` 会自动重新初始化。
