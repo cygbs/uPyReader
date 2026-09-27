@@ -1,7 +1,7 @@
-# 墨水屏阅读器（ESP32-S3-N16R8 + SSD1619 4.2"）
+# MPReader — MicroPython 墨水屏阅读器（ESP32-S3-N16R8 + SSD1619 4.2"）
 
 ```
-阅读器/
+MPReader/
 ├── README.md                   # 本文档
 ├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入；*.bin 不入库）
 ├── src/                        # 只放 MicroPython 源码 → 设备根目录
@@ -118,7 +118,7 @@ uv tool install mpremote
 跳过未改动文件：
 
 ```bash
-cd /home/ygbs/下载/阅读器
+cd /home/ygbs/下载/MPReader
 chmod +x tools/upload.sh
 
 tools/upload.sh                 # 默认 /dev/ttyACM0
@@ -159,7 +159,7 @@ CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
 ### 手动命令（等价做法）
 
 ```bash
-cd /home/ygbs/下载/阅读器
+cd /home/ygbs/下载/MPReader
 PORT=/dev/ttyACM0
 
 # 一次连接，把 src/ 下所有顶层条目复制到设备根目录
@@ -191,7 +191,7 @@ mpremote connect $PORT exec "import main; main.main()"
 上电即进主菜单：
 
 ```
-┌ 阅读器主菜单 ─────────────────── v0.2 ┐
+┌ MPReader ────────────────────────────┐
 │ ▶ 继续阅读                小说.txt   │  ← 选中项画方框 + ▶
 │   浏览文件                    1 本   │  ← Flash 里的 .txt 数量
 │   关于本机                ESP32-S3   │

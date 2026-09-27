@@ -25,6 +25,11 @@
 #       src/main.py                 ->  设备 /main.py
 #       assets/fonts/unifont16.bin  ->  设备 /fonts/unifont16.bin
 #
+# 阅读进度不会丢:
+#   代码上传只覆盖 src/ 对应的 /driver /ui /main.py 等; 小说与进度位于
+#   设备 /books/ 与 /books/.state/progress.json, 不在上传范围内, 即使
+#   CLEAN=1 也不会动它。 因此反复重传代码不会丢失阅读位置。
+#
 # 依赖: mpremote  (uv tool install mpremote  或  python3 -m pip install --user mpremote)
 #
 set -euo pipefail
