@@ -37,11 +37,10 @@
 # ---- 墨水屏 ----
 EPD_SCK  = 12
 EPD_MOSI = 11
-# 墨水屏只用 SDI(MOSI), 不用 MISO。但 ESP32-S3 的 SPI(1)=SPI2_HOST 默认 MISO 是
-# GPIO13 —— 而 GPIO13 现在是 TF 卡的 SCK。若不显式指定 MISO, 每次创建/重建 SPI(1)
-# 都会把 GPIO13 配成 SPI2 的 MISO, 抢走 TF 卡的时钟 -> 卡读不了(读子目录报 EIO)。
-# 所以显式给一个空闲脚做 MISO 占位。
-EPD_MISO = 21
+# 墨水屏只用 SDI(MOSI), 不用 MISO。切注意: ESP32-S3 的 SPI(1)=SPI2_HOST 默认 MISO
+# 是 GPIO13, 而 GPIO13 是 TF 卡的 SCK; 所以 epdlut.make_spi() 里显式传 miso=None,
+# 让 SPI 主机干脆不占任何 MISO 脚(传 None 后 repr 显示 miso=-1)。不指定的话, 每次
+# 创建/重建 SPI(1) 都会把 GPIO13 抢去当 MISO, TF 卡就没时钟了(读子目录报 EIO)。
 EPD_CS   = 10
 EPD_DC   = 9
 EPD_RST  = 8
