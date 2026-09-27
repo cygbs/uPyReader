@@ -12,6 +12,7 @@
 │       ├── ui.py               # 画布 + 文本对齐 + 列表菜单 + 信息页
 │       ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
 │       ├── sdcard.py           # SPI TF 卡挂载 / 容量（FAT32 + MBR）
+│       ├── sdspi.py            # 纯 Python SPI SD 驱动（源自 MicroPython 官方，MIT）
 │       ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
 │       ├── about.py            # “关于本机”页面
 │       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
@@ -35,6 +36,7 @@
 │   ├── ui.py
 │   ├── rotary.py
 │   ├── sdcard.py
+│   ├── sdspi.py
 │   ├── sysinfo.py
 │   ├── about.py
 │   ├── epd_ssd1619.py
@@ -96,29 +98,28 @@
 | `MISO` / `D0` | 数据入 | GPIO **15** | `SD_MISO` |
 | `CS` / `D3` | 片选 | GPIO **16** | `SD_CS` |
 
-**为什么不能和屏幕共用 SPI**（这一点和 Arduino 不一样）：
-MicroPython 的 `machine.SDCard` 在 SPI 模式下要求**独占一个 SPI 主机**，
-源码里会直接检查并报错：
+**为什么不和屏幕共用 SPI / 为什么不用 `machine.SDCard`**
 
-```c
-if (self->host.slot != sdspi_handle) {
-    // MicroPython restriction: the SPI bus must be exclusively for the SD card.
-    spi_bus_free(spi_host_id);
-    mp_raise_ValueError(MP_ERROR_TEXT("SPI bus already in use"));
-}
-```
+最初的方案用的是 `machine.SDCard`，但有三个问题：
 
-官方文档也说得很明确：“SPI mode makes use of a SPI host peripheral, which cannot
-concurrently be used for other SPI interactions.” 所以只能**各占一个主机**。
-ESP32-S3 正好有两个：
+1. 它在 SPI 模式下**要求独占一个 SPI 主机**，不能和屏幕共用（源码里会报
+   `SPI bus already in use`）；
+2. 更麻烦的是它的 `readblocks` 失败时**只返回 -5、不抛异常**
+   （`machine_sdcard.c`：`return err == ESP_OK ? 0 : -MP_EIO`），
+   错误原因被完全吞掉，极难排查；
+3. 它内部自己管总线，我们控制不了初始化频率。
 
-| | SPI 主机 | `machine.SPI` id | SDCard slot |
+所以现在改用**纯 Python 的 SPI SD 驱动** `library/sdspi.py`
+（来源：MicroPython 官方 `micropython/drivers/storage/sdcard/sdcard.py`，MIT），
+每一步失败都会抛出带具体原因的 `OSError`，而且可以自由选主机和频率：
+
+| | SPI 主机 | `machine.SPI` id | 引脚 |
 |---|---|---|---|
-| 屏幕 | **SPI2_HOST** | `SPI(1)` | — |
-| TF 卡 | **SPI3_HOST** | `SPI(2)` | **slot=2** |
+| 屏幕 | SPI2_HOST | `SPI(1)` | SCLK **12** / SDI **11** |
+| TF 卡 | SPI3_HOST | `SPI(2)` | SCK **13** / MOSI **14** / MISO **15** / CS **16** |
 
-（源码 `spi_dev_defaults[]`：slot 2 → `SPI3_HOST`，slot 3 → `SPI2_HOST`。
-`hwconfig.SD_SLOTS = (2, 3)` 会按顺序尝试，万一改了 `EPD_SPI_ID` 也能自动选到空闲主机。）
+卡初始化固定用 100 kHz，数据阶段按
+`SD_FREQS = (20M, 10M, 5M, 1M)` 依次降频重试。
 
 **供电注意**：很多 microSD 模块板载 AMS1117 / 电平转换，`VCC` 需要接 **5V**
 才能稳定输出 3.3V（AMS1117 压差大，接 3V3 时卡实际只得 ~2.3V，会识别不到）。
@@ -459,26 +460,25 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 **TF 卡显示「未挂载」**
 
-先在 REPL 里跑诊断（会把每个组合的真实错误都打出来，并直接读扇区 0）:
+先在 REPL 里跑诊断（会一步步报出在哪一步失败）:
 
 ```python
 import sdtest
 sdtest.run()
 ```
 
-按输出分两类：
+它分五步：A 开 SPI 总线 → B 测 MISO 空闲电平 → C 初始化卡 →
+D 读扇区 0 并解析 MBR → E 正式挂载。
 
-| 现象 | 原因 | 解决 |
+| 输出 | 原因 | 解决 |
 |---|---|---|
-| `卡无响应(读扇区0失败)` / `ENODEV` / `EIO` | **供电不足** —— 多数 microSD 模块板载 AMS1117，接 3V3 时卡实际只得 ~2.3V | 把模块 `VCC` 改接 **5V**（开发板 USB 供电时有 5V/VBUS 脚）；信号脚仍是 3.3V |
-| 换 5V 后仍无响应 | MISO / CS 接错 | 核对模块丝印：`D0=MISO`、`D3=CS`、`CMD=MOSI`、`CLK=SCK` |
-| `卡有响应` 但 `挂载失败` | FatFs 不认这个文件系统（exFAT / 未格式化） | 在 PC 上格成 **FAT32 + MBR** |
-| `SPI bus already in use`（出现在 slot3） | **正常现象** —— slot3 是屏幕占用的 SPI2_HOST | 忽略，真错误看第一条 |
+| `MISO = 0x00`（第 B 步） | MISO 被拉低：短路，或模块电平转换**供电不足** | 量模块 3.3V 脚；有 AMS1117 的模块 `VCC` 必须接 **5V** |
+| `no SD card` | CMD0 没应答 | 接线 / CS / 供电 |
+| `timeout waiting for v2 card` | ACMD41 超时，卡进不了就绪态 | **多半还是供电**（AMS1117 接 3V3 时卡只得 ~2.3V） |
+| `timeout waiting for response` | 收不到数据令牌 | MISO 接线；或频率太高（已自动降到 1MHz） |
+| 读到了扇区0，但 `类型 0x07 (exFAT/NTFS)` | 卡是 exFAT，FatFs 认不出 | 在 PC 上格成 **FAT32 + MBR** |
 
-想直接看所有尝试记录：`import sdcard; print(sdcard.attempts())`
-
-> 提醒：降频重试对“卡完全不响应”是没用的 —— SD 卡初始化本来就在 400 kHz 下做，
-> 频率只影响初始化之后的速度。三个频率都报同样的错，基本就是硬件层的问题。
+想看每次尝试的完整记录：`import sdcard; print(sdcard.attempts())`
 
 **报 `ImportError: can't import epd_ssd1619` / `unifont`**
 - 驱动/字库模块没上传成功。用 `mpremote connect PORT fs tree :` 看一下，

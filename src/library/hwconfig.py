@@ -65,12 +65,12 @@ ENC_LONG_MS = 800            # 长按判定(ms)
 #   CS/D3      片选        GPIO16    SD_CS
 #
 #   为什么用另一组引脚、而不是和屏幕共用 SPI：
-#     MicroPython 的 machine.SDCard 在 SPI 模式下要求 **独占一个 SPI 主机**，
-#     不能与其它 SPI 设备共用（源码里会直接报 "SPI bus already in use"）。
-#     ESP32-S3 正好有两个可用主机：
-#       屏幕 -> machine.SPI(1) = SPI2_HOST
-#       TF 卡 -> SDCard(slot=2) = SPI3_HOST
-#     所以两组引脚分开，但两个总线可以同时工作。
+#     ESP32-S3 上有两个可用 SPI 主机：
+#       屏幕   -> machine.SPI(1) = SPI2_HOST
+#       TF 卡  -> machine.SPI(2) = SPI3_HOST
+#     各占一个, 互不干扰。不用 machine.SDCard 的原因：它在 SPI 模式下
+#     要求独占主机, 而且 readblocks 失败时只返回 -5、不抛异常, 出错原因
+#     完全看不到。现在用纯 Python 的 sdspi.py 驱动(见 library/sdspi.py)。
 #
 #   供电注意：很多 microSD 模块板载 AMS1117/电平转换，VCC 需要 **5V**
 #     才能稳定输出 3.3V（AMS1117 压差大）。裸 3.3V 模块则接 3V3。
@@ -80,12 +80,10 @@ SD_SCK  = 13
 SD_MOSI = 14
 SD_MISO = 15
 SD_CS   = 16
+SD_SPI_ID = 2            # SPI(2) = SPI3_HOST（空闲；SPI(1) 被屏幕占用）
 
-# slot 2 -> SPI3_HOST（空闲）；slot 3 -> SPI2_HOST（被屏幕占用）。
-# 仍按顺序尝试，万一以后改了 EPD_SPI_ID 也能自动选到空闲主机。
-SD_SLOTS = (2, 3)
-# 依次降频尝试，提高兼容性（杜邦线/长线/差模块先降频）
-SD_FREQS = (20_000_000, 10_000_000, 4_000_000)
+# 数据阶段的 SPI 频率, 依次降频重试（卡初始化固定用 100kHz, 与这里无关）
+SD_FREQS = (20_000_000, 10_000_000, 5_000_000, 1_000_000)
 SD_MOUNT = "/sd"
 
 # ---- 屏幕 / 字库 ----
