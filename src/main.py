@@ -247,8 +247,9 @@ def read_otp_lut(epd, n=97):
 def make_partial_lut(otp, rep=PARTIAL_REP):
     """把 OTP 全刷波形裁成单阶段局刷波形(不闪)。
 
-    只保留第 3 组的阶段时间 tp, 其余组的 tp/repeat 全部清 0; 第 3 组的 repeat
-    设成 rep —— 实测这块屏 rep=8 时字已经很实, 约 2.1s, 且不闪。
+    前 35 字节的 vs(电压选择)和最后 6 字节的电压/frame 参数沿用面板 OTP，
+    只把 7 个波形组重写成单组: 第 3 组的阶段时间为 [03 02 05 00]、repeat=rep。
+    这组阶段是实测定下来的 —— 驱动相("05")足够长，字才够黑、不会发虚/卡住。
     """
     if not otp or len(otp) < 76:
         return None
@@ -256,14 +257,14 @@ def make_partial_lut(otp, rep=PARTIAL_REP):
     g = 35
     for gi in range(7):
         base = g + gi * 5
-        if gi == 3:
-            lut[base + 4] = rep
-        else:
-            lut[base + 0] = 0
-            lut[base + 1] = 0
-            lut[base + 2] = 0
-            lut[base + 3] = 0
-            lut[base + 4] = 0
+        for k in range(5):
+            lut[base + k] = 0
+    base = g + 3 * 5
+    lut[base + 0] = 0x03
+    lut[base + 1] = 0x02
+    lut[base + 2] = 0x05
+    lut[base + 3] = 0x00
+    lut[base + 4] = rep
     return bytes(lut)
 
 
@@ -514,12 +515,20 @@ def main():
                     if turned:
                         reader.draw(c, book)
                         page_turns += turned
-                        # 平时用局部波形: 不闪、快; 每 FULL_EVERY 页全刷一次清残影
-                        if partial_lut is None or \
-                                page_turns // FULL_EVERY != prev_turns // FULL_EVERY:
-                            c.show("full")
-                        else:
-                            c.show_lut(partial_lut)
+                        # 平时用自裁的局刷 LUT(不闪); 每 FULL_EVERY 页用 OTP 全刷清残影
+                        do_full = partial_lut is None or \
+                            page_turns // FULL_EVERY != prev_turns // FULL_EVERY
+                        try:
+                            if do_full:
+                                c.show("full")
+                            else:
+                                c.show_lut(partial_lut)
+                        except Exception as e:
+                            print("翻页刷新失败, 回退全刷:", e)
+                            try:
+                                c.show("full")
+                            except Exception:
+                                pass
 
                 # ---- 按下: 保存进度并回到主界面 ----
                 if ev & (CLICK | LONG):
