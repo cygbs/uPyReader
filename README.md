@@ -13,7 +13,7 @@ MPReader/
 │   │   ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
 │   │   ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
 │   │   ├── sdspi.py            # 纯 Python SPI TF 卡驱动（micropython-lib）
-│   │   └── sdcard.py           # 挂载 TF 卡到 /sd + 诊断
+│   │   └── sdcard.py           # 挂载 TF 卡到 /sd
 │   └── ui/                     # 绘制层：画布 + 页面
 │       ├── canvas.py           # 画布 + 文本对齐 + 列表菜单 + 信息页
 │       ├── unifont.py          # UFB1 位图字库读取 + 渲染
@@ -222,7 +222,7 @@ mpremote connect $PORT exec "import main; main.main()"
 
 ```
 ┌ 关于本机 ──────────────────────────┐
-│ 芯片    ESP32-S3                    │
+│ 屏幕    HINK-E042A13-A0 SYX1802     │
 │ 模块    Generic ESP32S3 module      │
 │         with Octal-SPIRAM           │
 │ 固件    v1.29.0  ESP32_GENERIC_S3-  │
@@ -230,6 +230,7 @@ mpremote connect $PORT exec "import main; main.main()"
 │ 主频    240 MHz                     │
 │ Flash   16 MB                       │
 │ PSRAM   8 MB                        │
+│ TF 卡   939 MB (可用 931 MB)        │
 │ MAC     7C:DF:A1:12:34:56           │
 ├─────────────────────────────────────┤
 │ 按下或长按返回                       │
@@ -283,12 +284,6 @@ mpremote connect $PORT exec "import main; main.main()"
 > 裸 3.3V 模块接 3V3。信号脚一律 3.3V。
 
 启动时自动挂到 `/sd`，日志会打印 `TF 卡: 已挂载 …`；没插卡也不影响使用。
-卡读不到时在 REPL 跑诊断（会逐项打印 MISO 空闲电平、原始 CMD0、各频率尝试）：
-
-```python
-import main; main.sd_debug()
-```
-
 驱动优先用 micropython-lib 的纯 Python `sdspi.py`（走 `SPI(2)`，不占用屏幕那路
 SPI，且每一步失败都会抛出具体原因）；不行时再回退到固件内置的 `machine.SDCard`。
 阅读进度仍存在**设备内部**的 `/books/.state/progress.json`，所以拔卡/换卡进度不丢。
@@ -482,11 +477,9 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
   再 `tools/upload.sh`，设备上应存在 `/fonts/unifont16.bin`。
 
 **TF 卡读不到 / 挂载失败**
-- 先在 REPL 跑诊断：`import main; main.sd_debug()`。它会打印 **MISO 空闲电平**、
-  **原始 CMD0 应答**（全 `0xFF` = 卡完全没反应）和各频率的尝试结果，直接定位是哪一步。
-- 最常见的是 **MOSI/MISO 接反**（模块常标 `DI`/`DO` 或 `SI`/`SO`）：把 MOSI 与
-  MISO 对调再试。
-- 带 AMS1117/电平转换的模块 **VCC 要接 5V**，3.3V 供电不稳会读到全 `0xFF`。
+- 最常见的是 **MOSI/MISO 接反**（模块常标 `DI`/`DO` 或 `SI`/`SO`），或者某根
+  杜邦线/焊点**接触不良** —— 卡会完全无应答（读回全 `0xFF`）。
+- 带 AMS1117/电平转换的模块 **VCC 接 5V**；只有电阻的 3.3V 模块接 3V3。
 - 卡可能锁在 SD 模式：整板断电一次再上电。
 - 卡要是 **FAT32 + MBR**（PC 上“格式化为 FAT32”即可），启动日志会有
   `TF 卡: 已挂载 /sd …`，卡上的 `books/` 会被「浏览文件」自动列出。

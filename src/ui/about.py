@@ -20,7 +20,7 @@ def _sd_value():
 
 def build_rows():
     return (
-        ("芯片", sysinfo.chip_name()),
+        ("屏幕", "HINK-E042A13-A0 SYX1802"),
         ("模块", sysinfo.board_name()),
         ("固件", sysinfo.firmware()),
         ("主频", "%d MHz" % sysinfo.freq_mhz()),

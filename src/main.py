@@ -290,7 +290,7 @@ def main():
               % (sdcard.mount_point(),
                  sysinfo.fmt_size(u[0]) if u else "?", sdcard.backend()))
     else:
-        print("TF 卡: 未挂载 (诊断: main.sd_debug())")
+        print("TF 卡: 未挂载")
 
     # 读设置 + 读一次面板 OTP 波形, 裁成局刷 LUT(失败则全程退化为全刷)
     cfg = apply_settings(settings.load())
@@ -480,16 +480,6 @@ def encoder_debug(seconds=20):
     """编码器自检: 校准 ENC_STEPS_PER_DETENT / 确认接线。"""
     Rotary(ENC_A, ENC_B, ENC_KEY, steps_per_detent=1,
            long_ms=ENC_LONG_MS).debug(seconds)
-
-
-def sd_debug():
-    """TF 卡诊断(REPL): import main; main.sd_debug()"""
-    return sdcard.diagnose()
-
-
-def sd_loopback():
-    """TF 卡回环自测(REPL): import main; main.sd_loopback()"""
-    return sdcard.loopback()
 
 
 if __name__ == "__main__":
