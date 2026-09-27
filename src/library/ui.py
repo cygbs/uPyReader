@@ -20,6 +20,7 @@ class Canvas:
             self.buf, epd.width, epd.height, framebuf.MONO_HLSB)
         self._mask = int.from_bytes(b"\xff" * len(self.buf), "big")
         self._fast = True
+        self._prev_panel = None           # 面板当前显示帧(局刷差分基线)
 
     def to_panel(self):
         """自然语义 -> 面板语义(1=白)。"""
@@ -34,7 +35,9 @@ class Canvas:
     def show(self, mode="full"):
         """送显, 返回耗时(ms)。mode: 'full' | 'fast' | 'partial'。"""
         t0 = time.ticks_ms()
-        self.epd.display(self.to_panel(), mode=mode)
+        panel = self.to_panel()
+        self.epd.display(panel, mode=mode)
+        self._prev_panel = panel          # 记住当前显示帧, 供后续局刷做差分基线
         return time.ticks_diff(time.ticks_ms(), t0)
 
     def show_rect(self, x, y, w, h):
@@ -48,7 +51,9 @@ class Canvas:
         """用自定义 LUT 送显(局刷/快刷波形), 返回耗时(ms)。
         lut 见 epd.display_lut()。"""
         t0 = time.ticks_ms()
-        self.epd.display_lut(self.to_panel(), lut)
+        panel = self.to_panel()
+        self.epd.display_lut(panel, lut, self._prev_panel)
+        self._prev_panel = panel
         return time.ticks_diff(time.ticks_ms(), t0)
 
 

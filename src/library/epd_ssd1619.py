@@ -263,18 +263,22 @@ class EPD_SSD1619:
         self.spi.write(lut)
         self.cs.value(1)
 
-    def display_lut(self, buf, lut):
+    def display_lut(self, buf, lut, prev=None):
         """用自定义 LUT 送显(局刷/快刷波形)。
 
-        lut 通常是启动时从面板 OTP 读回、再裁短的 76 字节波形(见 main.read_lut)。
-        0x22 用 0xCF(MODE1|MODE2, 不 LOAD_LUT) —— 若带 LOAD_LUT(0xF7) 会用 OTP
-        波形把刚写进去的自定义 LUT 覆盖掉。
+        prev: 面板当前正在显示的那一帧。SSD16xx 的局刷是拿 RAM 0x26(上一帧)
+        和 0x24(当前帧)做差分的, 所以刷新前要先把上一帧写进 0x26, 否则会把
+        更早的画面当成基线, 翻转时冒出旧内容。
         """
         if self._hibernated:
             self.init()
         self._write_lut(lut)
+        if prev is not None:
+            self._set_window(0, 0, self.width - 1, self.height - 1)
+            self._cmd(0x26)                        # WRITE RAM (上一帧 / 基线)
+            self._write_ram(prev)
         self._set_window(0, 0, self.width - 1, self.height - 1)
-        self._cmd(0x24)                            # WRITE RAM
+        self._cmd(0x24)                            # WRITE RAM (当前帧)
         self._write_ram(buf)
         self._cmd(0x22)
         self._data(0xCF)
