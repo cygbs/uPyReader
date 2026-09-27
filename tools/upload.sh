@@ -7,7 +7,7 @@
 #   ./upload.sh /dev/ttyUSB0        # 指定串口
 #   FORCE=1 ./upload.sh             # 强制重传（默认按 sha256 跳过未改动文件）
 #   CLEAN=1 ./upload.sh             # 上传前先删除对应的远端目录（用于删除本地已移除的文件）
-#   RUN=1 ./upload.sh               # 上传后执行 epd_test.run_all()
+#   RUN=1 ./upload.sh               # 上传后执行 main.main()
 #   RUN='import xxx; xxx.main()' ./upload.sh   # 上传后执行任意 Python 片段
 #   CHMOD=0 ./upload.sh             # 跳过上传前的 sudo chmod 777 <PORT>
 #
@@ -19,7 +19,7 @@
 #     └── README.md
 #
 #   例: src/library/epd_ssd1619.py  ->  设备 /library/epd_ssd1619.py
-#       src/epd_test.py             ->  设备 /epd_test.py
+#       src/main.py                 ->  设备 /main.py
 #       assets/fonts/unifont16.bin  ->  设备 /fonts/unifont16.bin
 #
 # 依赖: mpremote  (uv tool install mpremote  或  python3 -m pip install --user mpremote)
@@ -123,7 +123,7 @@ echo ">> 设备文件树 (/):"
 
 # ---- 可选：运行 -------------------------------------------------------------
 if [ "$RUN" = "1" ]; then
-    RUN='import epd_test; epd_test.run_all()'
+    RUN='import main; main.main()'
 fi
 if [ -n "$RUN" ]; then
     echo

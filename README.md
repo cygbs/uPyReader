@@ -6,7 +6,6 @@
 ├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入；*.bin 不入库）
 ├── src/                        # 只放 MicroPython 源码 → 设备根目录
 │   ├── main.py                 # ★ 主界面（开机自动运行）
-│   ├── epd_test.py             # 中文显示测试（独立诊断工具）
 │   └── library/
 │       ├── hwconfig.py         # ★ 引脚/硬件参数的唯一配置源
 │       ├── ui.py               # 画布 + 文本对齐 + 列表菜单 + 信息页
@@ -28,7 +27,6 @@
 ```
 /                 (设备根目录)
 ├── main.py                   ← 开机自动运行：主界面
-├── epd_test.py
 ├── library/
 │   ├── hwconfig.py
 │   ├── ui.py
@@ -63,9 +61,8 @@
 | `RES` | 复位 (RST) | GPIO **8** | `PIN_RST` |
 | `BUSY` | 忙信号 | GPIO **7** | `PIN_BUSY` |
 
-**所有引脚都集中在 `src/library/hwconfig.py`** —— 改接線只改那一个文件。
-`main.py` 和 `epd_test.py` 都从它读；`epd_test.py` 找不到时会退回内置默认值，
-所以它仍然可以单独运行。
+**所有引脚都集中在 `src/library/hwconfig.py`** —— 改接线只改那一个文件，
+`main.py` 从它读。
 
 ### 旋转编码器（增量式，带按键）
 
@@ -121,7 +118,7 @@ tools/upload.sh /dev/ttyUSB0     # 指定串口
 |---|---|
 | `FORCE=1` | 强制重传（不跳过内容相同的文件） |
 | `CLEAN=1` | 上传前先删掉对应的远端目录（本地删了文件时用它清理） |
-| `RUN=1` | 上传后执行 `epd_test.run_all()` |
+| `RUN=1` | 上传后执行 `main.main()` |
 | `RUN='import xxx; xxx.main()'` | 上传后执行任意 Python 片段 |
 | `MPREMOTE=/path/to/mpremote` | 指定 mpremote 可执行文件 |
 | `CHMOD=0` | 跳过上传前自动执行的 `sudo chmod 777 <PORT>` |
@@ -133,7 +130,7 @@ tools/upload.sh /dev/ttyUSB0     # 指定串口
 
 ```bash
 FORCE=1 tools/upload.sh                      # 全量重传
-RUN=1 tools/upload.sh                        # 传完就跑中文显示测试
+RUN=1 tools/upload.sh                        # 传完就进主界面
 CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
 ```
 
@@ -158,13 +155,13 @@ mpremote connect $PORT cp -r src/* :.
 mpremote connect $PORT fs tree :
 
 # 运行
-mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
+mpremote connect $PORT exec "import main; main.main()"
 ```
 
 ### Thonny
 
 打开 Thonny → 右下角解释器选 `MicroPython (ESP32)` + 端口 → 在“文件”面板把
-`src/library/epd_ssd1619.py` 上传到设备的 `/library`，把 `src/epd_test.py` 上传到设备根目录，
+`src/library/epd_ssd1619.py` 上传到设备的 `/library`，把 `src/main.py` 上传到设备根目录，
 然后点运行。
 
 > Demo 里的导入逻辑会依次尝试：当前目录 → `library/` → `/library` → `/lib`，放哪都能找到。
@@ -236,33 +233,6 @@ REPL 辅助：
 import main
 main.main()             # 重新进入主界面
 main.encoder_debug()    # 编码器自检：校准 ENC_STEPS_PER_DETENT / 确认接线
-```
-
-### 中文显示测试（独立诊断工具）
-
-在 REPL 里：
-
-```python
-import epd_test
-
-epd_test.run_all()                # 依次跑完全部中文显示测试（约 30 秒）
-epd_test.run_all(do_sleep=True)   # 跑完让屏休眠省电
-epd_test.menu()                   # 交互菜单，逐项测试
-```
-
-直接跑（跑完自动执行 `run_all()`）：
-
-```bash
-mpremote connect /dev/ttyACM0 exec "import epd_test; epd_test.run_all()"
-# 或: mpremote connect /dev/ttyACM0 run epd_test.py
-```
-
-单项测试也可以手动调：
-
-```python
-epd, spi, c = epd_test.setup()
-epd_test.t_page(c, epd)
-epd_test.t_partial(c, epd, seconds=20)
 ```
 
 ---
@@ -348,42 +318,7 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 
 ---
 
-## 5. 测试项说明
-
-全部测试都围绕**中文显示**，每一项标题栏都顺带验证了“黑底白字”反白。
-
-| 名称 | 内容 | 关注点 |
-|---|---|---|
-| `basic` | 中文基础渲染：标题栏 + 居中诗 + 字号/行数信息 | 字库是否加载、行高、每行字数 |
-| `mixed` | 中英数混排 + 基线参考线 | ASCII(8px)/汉字(16px) 步进与基线对齐 |
-| `punct` | 中文标点、引号括号、全角符号、箭头数学、货币 | 标点与全角字符是否都在字库内 |
-| `align` | 左 / 中 / 右 对齐 + 边界参考线 | `text_width()` 计算是否正确 |
-| `wrap` | 长段自动折行（`draw_wrapped`） | 折行点、行距、中英混排是否整齐 |
-| `page` | 模拟阅读器整页：状态栏 + 正文 + 底栏 | 真实阅读界面布局 |
-| `invert` | 白字黑底、选中条、进度条 | 反白（`ink=0`）是否正确 |
-| `missing` | 字库外字符（扩展 A / 卢恩 / 泰文 / 亚美尼亚文） | 缺字方框宽度自适应、不重叠 |
-| `refresh` | 全刷 / 快刷 / 局刷 波形耗时对比 | 刷新速度与残影 |
-| `partial` | 局刷动态：中文计数 + 进度条 | 局刷是否可用、残影累积速度 |
-| `done` | 结束页 | — |
-
-刷新模式用法（与驱动对应）：
-
-```python
-epd.init()                 # 全刷波形
-c.show("full")             # 0xF7，对比度最好，约 1.5~2 s
-
-epd.init_fast(1.0)         # 快刷波形
-c.show("fast")             # 0xC7，约 1 s，残影略重
-
-epd.init()                 # 局部刷新用全刷波形表
-c.show("partial")          # 0xFF，只重画变化区域，约 1 s
-```
-
-长时间频繁局刷会累积残影，Demo 里每 25 帧自动全刷一次清干净。
-
----
-
-## 6. 排错
+## 5. 排错
 
 **一直 `e-Paper busy timeout`**
 - 检查 BUSY 接线和 GPIO 号。SSD1619 是 **高电平=忙**；个别 UC8151D 模块是低电平忙，若你的模块是反的，把驱动 `_wait_busy()` 里的判断改成 `== 0`。
@@ -420,7 +355,7 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 
 ---
 
-## 7. 后续做阅读器
+## 6. 后续做阅读器
 
 现在的代码已经把做阅读器需要的两块基础铺好了：
 
