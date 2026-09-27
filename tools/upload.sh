@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# upload.sh — 把 src/ 下的全部 MicroPython 代码同步到开发板根目录
+# upload.sh — 把 src/ 下的 MicroPython 代码同步到开发板根目录, 并把 books/ 下的
+#             小说同步到设备 /books/
 #
 # 用法:
 #   ./upload.sh                     # 默认端口 /dev/ttyACM0，上传 src/ 下全部代码
@@ -8,6 +9,7 @@
 #   FORCE=1 ./upload.sh             # 强制重传（默认按 sha256 跳过未改动文件）
 #   CLEAN=1 ./upload.sh             # 上传前先删除对应的远端目录（用于删除本地已移除的文件）
 #   RUN=1 ./upload.sh               # 上传后执行 main.main()
+#   SYNC_BOOKS=1 ./upload.sh        # 同时把 books/*.txt 传到设备 /books/
 #   RUN='import xxx; xxx.main()' ./upload.sh   # 上传后执行任意 Python 片段
 #   CHMOD=0 ./upload.sh             # 跳过上传前的 sudo chmod 777 <PORT>
 #
@@ -15,6 +17,7 @@
 #   仓库根/
 #     ├── src/           ← 只放 MicroPython 源码；其下顶层条目原样映射到设备根
 #     ├── assets/        ← 资源文件(可选)；其下顶层条目也映射到设备根
+#     ├── books/         ← 小说(可选)；其下 *.txt 同步到设备 /books/
 #     ├── tools/         ← 本脚本等 PC 侧工具
 #     └── README.md
 #
@@ -30,12 +33,14 @@ PORT="${1:-/dev/ttyACM0}"
 MP="${MPREMOTE:-mpremote}"
 FORCE="${FORCE:-0}"
 CLEAN="${CLEAN:-0}"
+SYNC_BOOKS="${SYNC_BOOKS:-0}"     # =1 时把 books/*.txt 同步到设备 /books/(小说较大, 默认不传)
 RUN="${RUN:-}"
 CHMOD="${CHMOD:-1}"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO/src"
 ASSETS="$REPO/assets"
+BOOKS="$REPO/books"
 DEST=":."          # 远端当前目录（设备根）。注意用 ":.",不要用 ":",原因见下方注释
 
 # ----------------------------------------------------------------------------
@@ -120,6 +125,22 @@ echo ">> 上传中 ..."
 echo
 echo ">> 设备文件树 (/):"
 "$MP" connect "$PORT" fs tree : || true
+
+# ---- 可选：同步小说到设备 /books -------------------------------------------
+#   books/ 下的 .txt 只上传到开发板，不进仓库（.gitignore 已忽略 *.txt）。
+#   小说体积大、串口传输慢，所以默认不传；需要时用 SYNC_BOOKS=1 显式开启。
+if [ "$SYNC_BOOKS" = "1" ] && [ -d "$BOOKS" ]; then
+    BENTRIES=()
+    while IFS= read -r -d '' e; do
+        BENTRIES+=("$e")
+    done < <(find "$BOOKS" -mindepth 1 -maxdepth 1 -type f ! -name '.*' -print0 | sort -z)
+    if [ "${#BENTRIES[@]}" -gt 0 ]; then
+        echo
+        echo ">> 同步小说到设备 /books ..."
+        "$MP" connect "$PORT" fs mkdir :books 2>/dev/null || true
+        "$MP" connect "$PORT" cp -f "${BENTRIES[@]}" :books/
+    fi
+fi
 
 # ---- 可选：运行 -------------------------------------------------------------
 if [ "$RUN" = "1" ]; then

@@ -6,9 +6,9 @@ main.py — 墨水屏阅读器 主界面(设备开机自动运行)
 接线: 见 library/hwconfig.py
 
 操作:
-    旋转编码器  -> 上下选择
-    按下按键    -> 确认(关于本机会进入子页面; 其余项暂只做视觉反馈)
-    长按        -> 子页面里返回; 主界面暂未使用
+    主界面/文件列表  旋转 = 选择, 按下 = 确认, 长按 = 返回
+    阅读界面         旋转 = 翻页, 按下 = 退出到主界面
+                     每翻一页都会把阅读位置写进 Flash, 下次自动续读
 
 REPL 辅助:
     import main; main.encoder_debug()    # 校准编码器手感 / 确认接线
@@ -52,26 +52,35 @@ from rotary import Rotary, PRESS, RELEASE, CLICK, LONG
 import ui
 import sysinfo
 import about
+import reader
 
 
-APP_VERSION = "v0.1"
+APP_VERSION = "v0.2"
 
 LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
+FILE_ROWS = 5            # 文件列表一屏显示行数
 PARTIAL_LIMIT = 15       # 连续局刷多少次后插一次全刷(清残影)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
+FILE_HINT = "旋转选择   按下阅读   长按返回"
 
 
 # --------------------------------------------------------------------------- #
 # 菜单项与右侧提示
 # --------------------------------------------------------------------------- #
 def hint_reading():
-    return "无记录"
+    name = reader.last_book()
+    if not name:
+        return "无记录"
+    return name.rsplit("/", 1)[-1]
 
 
 def hint_files():
-    return "内部存储"
+    try:
+        return "%d 本" % len(reader.list_books())
+    except Exception:
+        return ""
 
 
 def hint_chip():
@@ -93,6 +102,8 @@ MENU = (
     ("固件设置", hint_fw),
     ("插件", hint_plugins),
 )
+IDX_CONTINUE = 0
+IDX_FILES = 1
 IDX_ABOUT = 2
 
 
@@ -165,7 +176,7 @@ def setup():
 
 
 # --------------------------------------------------------------------------- #
-# 界面
+# 公共绘制 / 局部刷新
 # --------------------------------------------------------------------------- #
 def build_hints():
     return [fn() for _, fn in MENU]
@@ -181,7 +192,7 @@ def draw_main(c, index, hints):
     ui.draw_footer(c, FOOT_HINT)
 
 
-def item_band(i):
+def row_band(i):
     """第 i 项占据的 y 区间(半开)。"""
     y0 = LIST_TOP + i * ROW_H
     return (y0, y0 + ROW_H)
@@ -228,6 +239,51 @@ def open_about(c):
 
 
 # --------------------------------------------------------------------------- #
+# 文件列表 / 阅读
+# --------------------------------------------------------------------------- #
+def draw_files(c, books, index, scroll):
+    c.fb.fill(0)
+    ui.title_bar(c, "浏览文件", "%d 本" % len(books))
+    if books:
+        vis = books[scroll:scroll + FILE_ROWS]
+        ui.draw_list(c, [n.rsplit("/", 1)[-1] for n, _ in vis], index - scroll,
+                     LIST_TOP, ROW_H, [sysinfo.fmt_size(s) for _, s in vis])
+    else:
+        lh = c.font.line_height
+        ui.text_center(c, "没有找到 .txt 文件", 120)
+        ui.text_center(c, "把小说放到 /books/ 目录", 120 + lh + 4)
+    ui.draw_footer(c, FILE_HINT)
+
+
+def open_book(c, name):
+    """打开一本书并显示第一屏。失败返回 None。"""
+    try:
+        book = reader.Book(name, c)
+    except Exception as e:
+        print("打开失败:", name, e)
+        show_toast(c, "打开失败", str(e)[:20])
+        return None
+    reader.draw(c, book)
+    c.show("full")
+    print("打开 %s 第 %d 页 (%d%%)" % (name, book.page_no(), book.progress()))
+    return book
+
+
+def open_continue(c):
+    """打开上次阅读的书。"""
+    name = reader.last_book()
+    if not name:
+        show_toast(c, "暂无阅读记录", "先浏览文件")
+        return None
+    try:
+        os.stat("/" + name)
+    except OSError:
+        show_toast(c, "上次的书不见了", name.rsplit("/", 1)[-1][:16])
+        return None
+    return open_book(c, name)
+
+
+# --------------------------------------------------------------------------- #
 # 主循环
 # --------------------------------------------------------------------------- #
 def main():
@@ -238,6 +294,11 @@ def main():
     hints = build_hints()
     index = 0
     screen = "menu"
+    books = []
+    book_i = 0
+    book_scroll = 0
+    book = None
+
     draw_main(c, index, hints)
     ms = c.show("full")
     print("主界面就绪(首屏 %d ms)。旋转=选择, 按下=确认。" % ms)
@@ -257,7 +318,7 @@ def main():
                     old = index
                     index = (index + d) % len(MENU)
                     draw_main(c, index, hints)
-                    bands = [item_band(old), item_band(index)]
+                    bands = [row_band(old), row_band(index)]
                     if toast_until:
                         bands.append(footer_band(c))     # 顺带把提示恢复掉
                         toast_until = 0
@@ -268,7 +329,22 @@ def main():
 
                 # ---- 按键 ----
                 if ev & CLICK:
-                    if index == IDX_ABOUT:
+                    if index == IDX_FILES:
+                        books = reader.list_books()
+                        book_i = 0
+                        book_scroll = 0
+                        draw_files(c, books, book_i, book_scroll)
+                        c.show("full")
+                        screen = "files"
+                    elif index == IDX_CONTINUE:
+                        b = open_continue(c)
+                        if b is not None:
+                            book = b
+                            screen = "reader"
+                        else:
+                            toast_until = time.ticks_add(
+                                time.ticks_ms(), TOAST_MS)
+                    elif index == IDX_ABOUT:
                         open_about(c)
                         screen = "about"
                     else:
@@ -284,6 +360,65 @@ def main():
                     draw_main(c, index, hints)
                     refresh_bands(c, [footer_band(c)])
                     toast_until = 0
+
+            elif screen == "files":
+                # ---- 旋转: 移动文件选择 ----
+                if d and books:
+                    old = book_i
+                    old_scroll = book_scroll
+                    book_i = (book_i + d) % len(books)
+                    if book_i < book_scroll:
+                        book_scroll = book_i
+                    elif book_i >= book_scroll + FILE_ROWS:
+                        book_scroll = book_i - FILE_ROWS + 1
+                    draw_files(c, books, book_i, book_scroll)
+                    if old_scroll != book_scroll:
+                        # 整屏都换了, 刷整块列表
+                        c.show_rect(0, LIST_TOP - 4, c.width,
+                                    FILE_ROWS * ROW_H + 8)
+                    else:
+                        refresh_bands(c, [row_band(old - book_scroll),
+                                          row_band(book_i - book_scroll)])
+
+                if ev & CLICK:
+                    if books:
+                        b = open_book(c, books[book_i][0])
+                        if b is not None:
+                            book = b
+                            screen = "reader"
+                elif ev & LONG:
+                    screen = "menu"
+                    hints = build_hints()
+                    draw_main(c, index, hints)
+                    c.show("full")
+
+            elif screen == "reader" and book is not None:
+                # ---- 旋转: 翻页(向前/向后); 每翻一页都会存进度 ----
+                if d:
+                    changed = False
+                    n = abs(d)
+                    if n > 5:
+                        n = 5
+                    for _ in range(n):
+                        if d > 0:
+                            if not book.next_page():
+                                break
+                        else:
+                            if not book.prev_page():
+                                break
+                        changed = True
+                    if changed:
+                        reader.draw(c, book)
+                        c.show("full")
+
+                # ---- 按下: 保存进度并回到主界面 ----
+                if ev & (CLICK | LONG):
+                    book.save()
+                    book = None
+                    screen = "menu"
+                    hints = build_hints()
+                    draw_main(c, index, hints)
+                    c.show("full")
 
             else:
                 # ---- 关于本机: 按一下或长按都返回主界面 ----
