@@ -243,7 +243,19 @@ class SDCard:
         self.cs(1)
         self.spi.write(b"\xff")
 
-    def readblocks(self, block_num, buf):
+    def readblocks(self, block_num, buf, retries=3):
+        """读扇区; 失败自动重试(长杜飞线/接触不良会有偶发 CMD 失败)。"""
+        last = None
+        for i in range(retries):
+            try:
+                return self._readblocks_once(block_num, buf)
+            except OSError as e:
+                last = e
+                if i + 1 < retries:
+                    time.sleep_ms(10)
+        raise last
+
+    def _readblocks_once(self, block_num, buf):
         # 共享总线时有用: 事务开始前先把 MOSI 抬高
         self.spi.write(b"\xff")
 
@@ -268,7 +280,19 @@ class SDCard:
             if self.cmd(12, 0, skip1=True):
                 raise OSError(5)
 
-    def writeblocks(self, block_num, buf):
+    def writeblocks(self, block_num, buf, retries=3):
+        """写扇区; 失败自动重试。"""
+        last = None
+        for i in range(retries):
+            try:
+                return self._writeblocks_once(block_num, buf)
+            except OSError as e:
+                last = e
+                if i + 1 < retries:
+                    time.sleep_ms(10)
+        raise last
+
+    def _writeblocks_once(self, block_num, buf):
         self.spi.write(b"\xff")
 
         nblocks, err = divmod(len(buf), 512)

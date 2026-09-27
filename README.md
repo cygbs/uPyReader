@@ -283,6 +283,11 @@ mpremote connect $PORT exec "import main; main.main()"
 > ⚠️ 带 AMS1117/电平转换的模块 **VCC 接 5V** 才能稳住 3.3V（压差大）；
 > 裸 3.3V 模块接 3V3。信号脚一律 3.3V。
 
+> 注：ESP32-S3 的 `SPI(1)=SPI2_HOST` 默认 **MISO 是 GPIO13**，而 GPIO13 这里是
+> TF 卡的 SCK。墨水屏只用 SDI(MOSI)、不用 MISO，所以 `hwconfig.EPD_MISO=21` 只是
+> 显式占一个空闲脚；若不指定，每次创建/重建 `SPI(1)`（如读 OTP 波形后）都会把
+> GPIO13 抢去当 MISO，TF 卡就没时钟了（读子目录报 `EIO`）。
+
 启动时自动挂到 `/sd`，日志会打印 `TF 卡: 已挂载 …`；没插卡也不影响使用。
 驱动优先用 micropython-lib 的纯 Python `sdspi.py`（走 `SPI(2)`，不占用屏幕那路
 SPI，且每一步失败都会抛出具体原因）；不行时再回退到固件内置的 `machine.SDCard`。

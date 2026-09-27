@@ -324,147 +324,165 @@ def main():
             d = enc.take_steps()
             ev = enc.take_events()
 
-            if screen == "menu":
-                # ---- 旋转: 移动光标 ----
-                if d:
-                    prev = menu_moves
-                    menu_moves += 1
-                    index = (index + d) % len(MENU)
-                    toast_until = 0
-                    draw_main(c, index, hints)
-                    refresh_screen(c, menu_moves, prev)
+            try:
+                if screen == "menu":
+                    # ---- 旋转: 移动光标 ----
+                    if d:
+                        prev = menu_moves
+                        menu_moves += 1
+                        index = (index + d) % len(MENU)
+                        toast_until = 0
+                        draw_main(c, index, hints)
+                        refresh_screen(c, menu_moves, prev)
 
-                # ---- 按键 ----
-                if ev & CLICK:
-                    if index == IDX_FILES:
-                        books = reader.list_books()
-                        book_i = 0
-                        book_scroll = 0
-                        draw_files(c, books, book_i, book_scroll)
-                        c.show()
-                        screen = "files"
-                    elif index == IDX_CONTINUE:
-                        b = open_continue(c)
-                        if b is not None:
-                            book = b
-                            page_turns = 0
-                            screen = "reader"
+                    # ---- 按键 ----
+                    if ev & CLICK:
+                        if index == IDX_FILES:
+                            books = reader.list_books()
+                            book_i = 0
+                            book_scroll = 0
+                            draw_files(c, books, book_i, book_scroll)
+                            c.show()
+                            screen = "files"
+                        elif index == IDX_CONTINUE:
+                            b = open_continue(c)
+                            if b is not None:
+                                book = b
+                                page_turns = 0
+                                screen = "reader"
+                            else:
+                                toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
+                        elif index == IDX_ABOUT:
+                            open_about(c)
+                            screen = "about"
+                        elif index == IDX_SETTINGS:
+                            cfg = settings.load()
+                            apply_settings(cfg)
+                            set_index = 0
+                            set_edit = False
+                            set_moves = 0
+                            settings.draw(c, cfg, set_index, set_edit)
+                            c.show()
+                            screen = "settings"
                         else:
+                            show_toast(c, "已选择：%s" % MENU[index][0],
+                                       "子页面待实现")
                             toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
-                    elif index == IDX_ABOUT:
-                        open_about(c)
-                        screen = "about"
-                    elif index == IDX_SETTINGS:
-                        cfg = settings.load()
-                        apply_settings(cfg)
-                        set_index = 0
-                        set_edit = False
-                        set_moves = 0
-                        settings.draw(c, cfg, set_index, set_edit)
-                        c.show()
-                        screen = "settings"
-                    else:
-                        show_toast(c, "已选择：%s" % MENU[index][0],
-                                   "子页面待实现")
+                    elif ev & LONG:
+                        show_toast(c, "长按(暂未使用)", "返回")
                         toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
-                elif ev & LONG:
-                    show_toast(c, "长按(暂未使用)", "返回")
-                    toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
 
-                # ---- 提示超时后恢复 ----
-                if toast_until and time.ticks_diff(time.ticks_ms(), toast_until) >= 0:
-                    draw_main(c, index, hints)
-                    show_partial(c)
-                    toast_until = 0
+                    # ---- 提示超时后恢复 ----
+                    if toast_until and time.ticks_diff(time.ticks_ms(), toast_until) >= 0:
+                        draw_main(c, index, hints)
+                        show_partial(c)
+                        toast_until = 0
 
-            elif screen == "files":
-                # ---- 旋转: 移动文件选择 ----
-                if d and books:
-                    prev = file_moves
-                    file_moves += 1
-                    book_i = (book_i + d) % len(books)
-                    if book_i < book_scroll:
-                        book_scroll = book_i
-                    elif book_i >= book_scroll + FILE_ROWS:
-                        book_scroll = book_i - FILE_ROWS + 1
-                    draw_files(c, books, book_i, book_scroll)
-                    refresh_screen(c, file_moves, prev)
+                elif screen == "files":
+                    # ---- 旋转: 移动文件选择 ----
+                    if d and books:
+                        prev = file_moves
+                        file_moves += 1
+                        book_i = (book_i + d) % len(books)
+                        if book_i < book_scroll:
+                            book_scroll = book_i
+                        elif book_i >= book_scroll + FILE_ROWS:
+                            book_scroll = book_i - FILE_ROWS + 1
+                        draw_files(c, books, book_i, book_scroll)
+                        refresh_screen(c, file_moves, prev)
 
-                if ev & CLICK:
-                    if books:
-                        b = open_book(c, books[book_i][0])
-                        if b is not None:
-                            book = b
-                            page_turns = 0
-                            screen = "reader"
-                elif ev & LONG:
-                    screen = "menu"
-                    hints = build_hints()
-                    draw_main(c, index, hints)
-                    c.show()
+                    if ev & CLICK:
+                        if books:
+                            b = open_book(c, books[book_i][0])
+                            if b is not None:
+                                book = b
+                                page_turns = 0
+                                screen = "reader"
+                    elif ev & LONG:
+                        screen = "menu"
+                        hints = build_hints()
+                        draw_main(c, index, hints)
+                        c.show()
 
-            elif screen == "reader" and book is not None:
-                # ---- 旋转: 翻页(向前/向后); 每翻一页都会存进度 ----
-                if d:
-                    turned = 0
-                    for _ in range(min(abs(d), 5)):
-                        if d > 0:
-                            if not book.next_page():
+                elif screen == "reader" and book is not None:
+                    # ---- 旋转: 翻页(向前/向后); 每翻一页都会存进度 ----
+                    if d:
+                        turned = 0
+                        for _ in range(min(abs(d), 5)):
+                            if d > 0:
+                                if not book.next_page():
+                                    break
+                            elif not book.prev_page():
                                 break
-                        elif not book.prev_page():
-                            break
-                        turned += 1
-                    if turned:
-                        prev = page_turns
-                        page_turns += turned
-                        reader.draw(c, book)
-                        refresh_screen(c, page_turns, prev)
+                            turned += 1
+                        if turned:
+                            prev = page_turns
+                            page_turns += turned
+                            reader.draw(c, book)
+                            refresh_screen(c, page_turns, prev)
 
-                # ---- 按下: 保存进度并回到主界面 ----
-                if ev & (CLICK | LONG):
-                    book.save()
-                    book = None
-                    screen = "menu"
-                    hints = build_hints()
-                    draw_main(c, index, hints)
-                    c.show()
+                    # ---- 按下: 保存进度并回到主界面 ----
+                    if ev & (CLICK | LONG):
+                        book.save()
+                        book = None
+                        screen = "menu"
+                        hints = build_hints()
+                        draw_main(c, index, hints)
+                        c.show()
 
-            elif screen == "settings":
-                # ---- 旋转: 选择项目 / 调整数值 ----
-                if d:
-                    prev = set_moves
-                    set_moves += 1
-                    if set_edit:
-                        settings.adjust(cfg, settings.ITEMS[set_index][0], d)
-                        apply_settings(cfg)
-                    else:
-                        set_index = (set_index + d) % len(settings.ITEMS)
-                    settings.draw(c, cfg, set_index, set_edit)
-                    refresh_screen(c, set_moves, prev)
+                elif screen == "settings":
+                    # ---- 旋转: 选择项目 / 调整数值 ----
+                    if d:
+                        prev = set_moves
+                        set_moves += 1
+                        if set_edit:
+                            settings.adjust(cfg, settings.ITEMS[set_index][0], d)
+                            apply_settings(cfg)
+                        else:
+                            set_index = (set_index + d) % len(settings.ITEMS)
+                        settings.draw(c, cfg, set_index, set_edit)
+                        refresh_screen(c, set_moves, prev)
 
-                # ---- 按下: 进入/退出调整; 长按: 保存并返回 ----
-                if ev & CLICK:
-                    set_edit = not set_edit
-                    if not set_edit:
+                    # ---- 按下: 进入/退出调整; 长按: 保存并返回 ----
+                    if ev & CLICK:
+                        set_edit = not set_edit
+                        if not set_edit:
+                            settings.save(cfg)
+                        settings.draw(c, cfg, set_index, set_edit)
+                        show_partial(c)
+                    elif ev & LONG:
                         settings.save(cfg)
-                    settings.draw(c, cfg, set_index, set_edit)
-                    show_partial(c)
-                elif ev & LONG:
-                    settings.save(cfg)
-                    set_edit = False
-                    screen = "menu"
-                    hints = build_hints()      # 全刷间隔可能刚改过
-                    draw_main(c, index, hints)
-                    c.show()
+                        set_edit = False
+                        screen = "menu"
+                        hints = build_hints()      # 全刷间隔可能刚改过
+                        draw_main(c, index, hints)
+                        c.show()
 
-            else:
-                # ---- 关于本机: 按一下或长按都返回主界面 ----
-                if ev & (CLICK | LONG):
-                    screen = "menu"
-                    toast_until = 0
-                    hints = build_hints()        # 插件数量可能刚变化
-                    draw_main(c, index, hints)
+                else:
+                    # ---- 关于本机: 按一下或长按都返回主界面 ----
+                    if ev & (CLICK | LONG):
+                        screen = "menu"
+                        toast_until = 0
+                        hints = build_hints()        # 插件数量可能刚变化
+                        draw_main(c, index, hints)
+                        c.show()
+            except Exception as e:
+                # 任何未预期异常(例如 TF 卡偶发 EIO)都不打死界面:
+                # 打印后回主界面, 编码器继续可用。
+                print("!! 界面异常:", e)
+                try:
+                    sys.print_exception(e)
+                except Exception:
+                    pass
+                screen = "menu"
+                book = None
+                toast_until = 0
+                hints = build_hints()
+                draw_main(c, index, hints)
+                try:
                     c.show()
+                except Exception:
+                    pass
 
             time.sleep_ms(5)
 

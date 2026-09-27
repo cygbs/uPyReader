@@ -14,7 +14,8 @@
 
 import time
 from machine import Pin, SPI
-from driver.hwconfig import EPD_SCK, EPD_MOSI, EPD_SPI_ID, EPD_SPI_BAUD
+from driver.hwconfig import (EPD_SCK, EPD_MOSI, EPD_MISO, EPD_SPI_ID,
+                             EPD_SPI_BAUD)
 
 READ_BYTES = 97          # 0x33 一次多读几个字节; 7 字节 LUT 实为 76
 LUT_BYTES = 76
@@ -27,12 +28,16 @@ DEFAULT_REP = 8          # repeat 越大字越"实"、越慢(每 +1 约 +0.2s)
 
 
 def make_spi():
-    """按 hwconfig 建 SPI 总线(优先 EPD_SPI_ID, 不行再试 2 / 1)。"""
+    """按 hwconfig 建 SPI 总线(优先 EPD_SPI_ID, 不行再试 2 / 1)。
+
+    显式指定 miso: ESP32-S3 的 SPI(1) 默认 MISO=GPIO13, 而 GPIO13 是 TF 卡的
+    SCK; 不指定的话重建 SPI(1) 会把 GPIO13 抢走, 导致 TF 卡读不了。
+    """
     last = None
     for sid in (EPD_SPI_ID, 2, 1):
         try:
             return SPI(sid, baudrate=EPD_SPI_BAUD, polarity=0, phase=0,
-                       sck=Pin(EPD_SCK), mosi=Pin(EPD_MOSI))
+                       sck=Pin(EPD_SCK), mosi=Pin(EPD_MOSI), miso=Pin(EPD_MISO))
         except Exception as e:
             last = e
     raise last

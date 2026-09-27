@@ -56,23 +56,25 @@ def list_books():
 
     def walk(rel):
         base = "/" + rel if rel else "/"
+        # 注意: MicroPython 的 os.ilistdir 返回迭代器, 真正读盘发生在迭代时,
+        # 所以 try 必须包住整个 for 循环 —— 否则卡/总线一出错, OSError 会冒出
+        # list_books() 把整个主界面打挂(表现为"点浏览文件后卡死")。
         try:
-            entries = os.ilistdir(base)
-        except OSError:
-            return
-        for e in entries:
-            name = _name_of(e)
-            if not name or name.startswith("."):
-                continue
-            isdir = len(e) > 1 and (e[1] & 0x4000)
-            child = (rel + "/" + name) if rel else name
-            if isdir:
-                if name in _SKIP_DIRS:
+            for e in os.ilistdir(base):
+                name = _name_of(e)
+                if not name or name.startswith("."):
                     continue
-                walk(child)
-            elif name.lower().endswith(TXT_EXT):
-                size = e[3] if len(e) > 3 else 0
-                out.append((child, size))
+                isdir = len(e) > 1 and (e[1] & 0x4000)
+                child = (rel + "/" + name) if rel else name
+                if isdir:
+                    if name in _SKIP_DIRS:
+                        continue
+                    walk(child)
+                elif name.lower().endswith(TXT_EXT):
+                    size = e[3] if len(e) > 3 else 0
+                    out.append((child, size))
+        except OSError as e:
+            print("扫描目录失败:", base, e)
 
     walk("")
     out.sort(key=lambda x: x[0])
