@@ -11,8 +11,6 @@
 │       ├── hwconfig.py         # ★ 引脚/硬件参数的唯一配置源
 │       ├── ui.py               # 画布 + 文本对齐 + 列表菜单 + 信息页
 │       ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
-│       ├── sdcard.py           # SPI TF 卡挂载 / 容量（FAT32 + MBR）
-│       ├── sdspi.py            # 纯 Python SPI SD 驱动（源自 MicroPython 官方，MIT）
 │       ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
 │       ├── about.py            # “关于本机”页面
 │       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
@@ -35,15 +33,12 @@
 │   ├── hwconfig.py
 │   ├── ui.py
 │   ├── rotary.py
-│   ├── sdcard.py
-│   ├── sdspi.py
 │   ├── sysinfo.py
 │   ├── about.py
 │   ├── epd_ssd1619.py
 │   └── unifont.py
-├── fonts/
-│   └── unifont16.bin
-└── sd/                       ← TF 卡挂载点（运行时自动挂载）
+└── fonts/
+    └── unifont16.bin
 ```
 
 - 屏幕：HINK-E042A13-A0 4.2" 400×300 黑白，控制芯片 SSD1619（或 UC8151D，指令同族）
@@ -86,50 +81,6 @@
 
 - 三个脚都启用**内部上拉**；模块自带 10k 上拉也没影响。
 - 手感不对（转一格跳太多/太少）→ 用 `main.encoder_debug()` 校准 `ENC_STEPS_PER_DETENT`。
-
-### SPI TF 卡（microSD）
-
-| 模块丝印 | 含义 | 默认接到 | 变量 |
-|---|---|---|---|
-| `VCC` | 电源（**见下方供电说明**） | 5V 或 3V3 | — |
-| `GND` | 地 | GND | — |
-| `SCK` / `CLK` | SPI 时钟 | GPIO **13** | `SD_SCK` |
-| `MOSI` / `CMD` | 数据出 | GPIO **14** | `SD_MOSI` |
-| `MISO` / `D0` | 数据入 | GPIO **15** | `SD_MISO` |
-| `CS` / `D3` | 片选 | GPIO **16** | `SD_CS` |
-
-**为什么不和屏幕共用 SPI / 为什么不用 `machine.SDCard`**
-
-最初的方案用的是 `machine.SDCard`，但有三个问题：
-
-1. 它在 SPI 模式下**要求独占一个 SPI 主机**，不能和屏幕共用（源码里会报
-   `SPI bus already in use`）；
-2. 更麻烦的是它的 `readblocks` 失败时**只返回 -5、不抛异常**
-   （`machine_sdcard.c`：`return err == ESP_OK ? 0 : -MP_EIO`），
-   错误原因被完全吞掉，极难排查；
-3. 它内部自己管总线，我们控制不了初始化频率。
-
-所以现在改用**纯 Python 的 SPI SD 驱动** `library/sdspi.py`
-（来源：MicroPython 官方 `micropython/drivers/storage/sdcard/sdcard.py`，MIT），
-每一步失败都会抛出带具体原因的 `OSError`，而且可以自由选主机和频率：
-
-| | SPI 主机 | `machine.SPI` id | 引脚 |
-|---|---|---|---|
-| 屏幕 | SPI2_HOST | `SPI(1)` | SCLK **12** / SDI **11** |
-| TF 卡 | SPI3_HOST | `SPI(2)` | SCK **13** / MOSI **14** / MISO **15** / CS **16** |
-
-卡初始化固定用 100 kHz，数据阶段按
-`SD_FREQS = (20M, 10M, 5M, 1M)` 依次降频重试。
-
-**供电注意**：很多 microSD 模块板载 AMS1117 / 电平转换，`VCC` 需要接 **5V**
-才能稳定输出 3.3V（AMS1117 压差大，接 3V3 时卡实际只得 ~2.3V，会识别不到）。
-裸 3.3V 模块就接 3V3。信号脚一律 3.3V 逻辑，不要接 5V 信号。
-
-**卡的格式**：直接用 PC 上普通工具格式化成 **FAT32**（MBR 分区表）即可，
-不需要额外处理 —— FatFs 内置 FDISK/MBR 解析（先读扇区 0，不是 FAT 引导扇区就
-当 MBR 解析分区表，再读分区引导扇区）。
-
-`hwconfig.SD_FREQS = (20M, 10M, 4M)` 会降频重试，杜邦线太长/模块差时会自动降速。
 
 注意：
 - `SDI` = MOSI（ESP32 输出数据给屏幕），`SCLK` = 时钟。屏是只写设备，
@@ -230,7 +181,7 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 ```
 ┌ 阅读器主菜单 ─────────────────── v0.1 ┐
 │ ▶ 继续阅读                  无记录   │  ← 选中项整行反白 + ▶
-│   浏览文件                  30 GB    │  ← TF 卡容量
+│   浏览文件                内部存储    │  ← 浏览内部存储
 │   关于本机                ESP32-S3   │
 │   固件设置              MicroPython  │
 │   插件                        0 个   │
@@ -260,7 +211,6 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 │ 主频    240 MHz                     │
 │ Flash   16 MB                       │
 │ PSRAM   8 MB                        │
-│ TF 卡   29.8 GB 可用 29.0 GB @10MHz │
 │ MAC     7C:DF:A1:12:34:56           │
 ├─────────────────────────────────────┤
 │ 按下或长按返回                       │
@@ -268,8 +218,7 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 ```
 
 数据来源见 `library/sysinfo.py`：**Flash** 由自动创建的 `vfs` 分区末端推断，
-**PSRAM** 取 IDF 堆区里最大的一块，**TF 容量**用 `os.statvfs()`。
-打开这一页会**再挂载一次 TF 卡**，所以插上卡后进来就能看到容量。
+**PSRAM** 取 IDF 堆区里最大的一块。
 
 - 光标移动走**窗口局部刷新**（`epd.display_partial_rect()`）：只写、只驱动受影响的那两行
   （约 92/300 行），其余像素完全不动。连续移动 15 次后自动插一次全刷清残影。
@@ -457,28 +406,6 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
 - 主界面已按官方序列做窗口局刷。若仍异常，可在 `main.py` 里把 `refresh_bands()` 换成
   `c.show("partial")`（整屏局部波形）对比试试，或把 `PARTIAL_LIMIT` 调小（更频繁全刷）。
 - 不同批次模组的波形表可能不同，必要时试 `epd.init_min()` 做初始化。
-
-**TF 卡显示「未挂载」**
-
-先在 REPL 里跑诊断（会一步步报出在哪一步失败）:
-
-```python
-import sdtest
-sdtest.run()
-```
-
-它分五步：A 开 SPI 总线 → B 测 MISO 空闲电平 → C 初始化卡 →
-D 读扇区 0 并解析 MBR → E 正式挂载。
-
-| 输出 | 原因 | 解决 |
-|---|---|---|
-| `MISO = 0x00`（第 B 步） | MISO 被拉低：短路，或模块电平转换**供电不足** | 量模块 3.3V 脚；有 AMS1117 的模块 `VCC` 必须接 **5V** |
-| `no SD card` | CMD0 没应答 | 接线 / CS / 供电 |
-| `timeout waiting for v2 card` | ACMD41 超时，卡进不了就绪态 | **多半还是供电**（AMS1117 接 3V3 时卡只得 ~2.3V） |
-| `timeout waiting for response` | 收不到数据令牌 | MISO 接线；或频率太高（已自动降到 1MHz） |
-| 读到了扇区0，但 `类型 0x07 (exFAT/NTFS)` | 卡是 exFAT，FatFs 认不出 | 在 PC 上格成 **FAT32 + MBR** |
-
-想看每次尝试的完整记录：`import sdcard; print(sdcard.attempts())`
 
 **报 `ImportError: can't import epd_ssd1619` / `unifont`**
 - 驱动/字库模块没上传成功。用 `mpremote connect PORT fs tree :` 看一下，

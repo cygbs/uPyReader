@@ -2,7 +2,7 @@
 """
 main.py — 墨水屏阅读器 主界面(设备开机自动运行)
 
-硬件: ESP32-S3-N16R8 + SSD1619 4.2" 400x300 + 增量式旋转编码器 + SPI TF 卡
+硬件: ESP32-S3-N16R8 + SSD1619 4.2" 400x300 + 增量式旋转编码器
 接线: 见 library/hwconfig.py
 
 操作:
@@ -50,7 +50,6 @@ from epd_ssd1619 import EPD_SSD1619
 from unifont import Unifont
 from rotary import Rotary, PRESS, RELEASE, CLICK, LONG
 import ui
-import sdcard
 import sysinfo
 import about
 
@@ -71,13 +70,8 @@ def hint_reading():
     return "无记录"
 
 
-def hint_sd():
-    total, free = sdcard.capacity()
-    if not total:
-        return "无卡"
-    if total >= (1 << 30):
-        return "%.0f GB" % (total / (1 << 30))
-    return "%.0f MB" % (total / (1 << 20))
+def hint_files():
+    return "内部存储"
 
 
 def hint_chip():
@@ -94,7 +88,7 @@ def hint_plugins():
 
 MENU = (
     ("继续阅读", hint_reading),
-    ("浏览文件", hint_sd),
+    ("浏览文件", hint_files),
     ("关于本机", hint_chip),
     ("固件设置", hint_fw),
     ("插件", hint_plugins),
@@ -228,7 +222,7 @@ def show_toast(c, left, right=None):
 
 
 def open_about(c):
-    """进入"关于本机"(顺带再试一次挂载 TF 卡, 插卡后进来即可看到容量)。"""
+    """进入"关于本机"。"""
     about.draw(c)
     return c.show("full")
 
@@ -240,15 +234,6 @@ def main():
     epd, spi, c = setup()
     enc = Rotary(ENC_A, ENC_B, ENC_KEY,
                  steps_per_detent=ENC_STEPS_PER_DETENT, long_ms=ENC_LONG_MS)
-
-    # 上电先尝试挂载 TF 卡(失败不影响主界面, 只影响提示与"关于本机")
-    sd, freq = sdcard.ensure_mounted()
-    if sd is not None:
-        total, free = sdcard.capacity()
-        print("TF 卡已挂载 @%d MHz, 容量 %s" % (freq // 1000000,
-                                              sysinfo.fmt_size(total)))
-    else:
-        print("TF 卡未挂载: %s" % sdcard.last_error())
 
     hints = build_hints()
     index = 0
@@ -305,7 +290,7 @@ def main():
                 if ev & (CLICK | LONG):
                     screen = "menu"
                     toast_until = 0
-                    hints = build_hints()        # TF 卡容量可能刚变化
+                    hints = build_hints()        # 插件数量可能刚变化
                     draw_main(c, index, hints)
                     c.show("full")
 

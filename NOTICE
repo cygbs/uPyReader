@@ -15,12 +15,3 @@ Dual-licensed:
 
 本项目按 SIL OFL 1.1 使用该字体。分发时请一并附带上述许可与出处。
 --------------------------------------------------------------------------
-
-src/library/sdspi.py （纯 Python 的 SPI 模式 SD 卡驱动）来自 MicroPython 官方仓库：
-
-  micropython-lib / micropython/drivers/storage/sdcard/sdcard.py
-  Copyright (c) MicroPython contributors
-  MIT License — https://github.com/micropython/micropython-lib
-
-本仓库对其做了少量修改（const 兼容、增加 deinit()、中文注释）。
---------------------------------------------------------------------------
