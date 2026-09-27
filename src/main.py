@@ -52,7 +52,7 @@ from driver.epd_ssd1619 import EPD_SSD1619
 from driver.rotary import Rotary, CLICK, LONG
 from driver import epdlut, sysinfo
 from ui.unifont import Unifont
-from ui import about, canvas, reader
+from ui import about, canvas, reader, settings
 
 
 APP_VERSION = "v0.2"
@@ -60,12 +60,14 @@ APP_VERSION = "v0.2"
 LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
 FILE_ROWS = 5            # 文件列表一屏显示行数
+# 下面两项可在「固件设置」里改(默认 8), 运行期由 apply_settings() 更新
 FULL_EVERY = 8           # 每移动/翻页多少次插一次全刷(其余用不闪的局刷 LUT)
 PARTIAL_REP = 8          # 局刷波形里保留组的 repeat(越大字越"实", 越慢)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"
 
+PARTIAL_OTP = None       # 面板 OTP 里的原始波形(改局刷深度时用它重新裁)
 PARTIAL_LUT = None       # 运行期由 main() 填入(epdlut 裁出的局刷波形)
 
 
@@ -89,7 +91,7 @@ def hint_chip():
 
 
 def hint_fw():
-    return "MicroPython"
+    return "全刷 %d / 深度 %d" % (FULL_EVERY, PARTIAL_REP)
 
 
 def hint_plugins():
@@ -106,6 +108,8 @@ MENU = (
 IDX_CONTINUE = 0
 IDX_FILES = 1
 IDX_ABOUT = 2
+IDX_SETTINGS = 3
+IDX_PLUGINS = 4
 
 
 # --------------------------------------------------------------------------- #
@@ -184,6 +188,16 @@ def refresh_screen(c, count, prev):
         c.show()
     else:
         show_partial(c)
+
+
+def apply_settings(cfg):
+    """把设置应用到运行期: 更新 FULL_EVERY, 并按新的局刷深度重裁 LUT。"""
+    global FULL_EVERY, PARTIAL_REP, PARTIAL_LUT
+    FULL_EVERY = cfg["full_every"]
+    PARTIAL_REP = cfg["partial_rep"]
+    if PARTIAL_OTP is not None:
+        PARTIAL_LUT = epdlut.make_partial_lut(PARTIAL_OTP, PARTIAL_REP)
+    return cfg
 
 
 # --------------------------------------------------------------------------- #
@@ -266,10 +280,13 @@ def main():
     enc = Rotary(ENC_A, ENC_B, ENC_KEY,
                  steps_per_detent=ENC_STEPS_PER_DETENT, long_ms=ENC_LONG_MS)
 
-    # 读一次面板 OTP 波形并裁成局刷 LUT(失败则全程退化为全刷)
-    PARTIAL_LUT = epdlut.load(epd, PARTIAL_REP)
-    print("局刷 LUT: %s" % ("就绪 (repeat=%d)" % PARTIAL_REP
-                            if PARTIAL_LUT else "不可用, 将使用全刷"))
+    # 读设置 + 读一次面板 OTP 波形, 裁成局刷 LUT(失败则全程退化为全刷)
+    cfg = apply_settings(settings.load())
+    PARTIAL_OTP = epdlut.read_otp_lut(epd)
+    if PARTIAL_OTP is not None:
+        PARTIAL_LUT = epdlut.make_partial_lut(PARTIAL_OTP, PARTIAL_REP)
+    print("设置: 全刷间隔=%d, 局刷深度=%d" % (FULL_EVERY, PARTIAL_REP))
+    print("局刷 LUT: %s" % ("就绪" if PARTIAL_LUT else "不可用, 将使用全刷"))
 
     hints = build_hints()
     index = 0
@@ -281,6 +298,9 @@ def main():
     page_turns = 0
     menu_moves = 0
     file_moves = 0
+    set_index = 0
+    set_edit = False
+    set_moves = 0
     toast_until = 0
 
     draw_main(c, index, hints)
@@ -322,6 +342,15 @@ def main():
                     elif index == IDX_ABOUT:
                         open_about(c)
                         screen = "about"
+                    elif index == IDX_SETTINGS:
+                        cfg = settings.load()
+                        apply_settings(cfg)
+                        set_index = 0
+                        set_edit = False
+                        set_moves = 0
+                        settings.draw(c, cfg, set_index, set_edit)
+                        c.show()
+                        screen = "settings"
                     else:
                         show_toast(c, "已选择：%s" % MENU[index][0],
                                    "子页面待实现")
@@ -385,6 +414,34 @@ def main():
                     book = None
                     screen = "menu"
                     hints = build_hints()
+                    draw_main(c, index, hints)
+                    c.show()
+
+            elif screen == "settings":
+                # ---- 旋转: 选择项目 / 调整数值 ----
+                if d:
+                    prev = set_moves
+                    set_moves += 1
+                    if set_edit:
+                        settings.adjust(cfg, settings.ITEMS[set_index][0], d)
+                        apply_settings(cfg)
+                    else:
+                        set_index = (set_index + d) % len(settings.ITEMS)
+                    settings.draw(c, cfg, set_index, set_edit)
+                    refresh_screen(c, set_moves, prev)
+
+                # ---- 按下: 进入/退出调整; 长按: 保存并返回 ----
+                if ev & CLICK:
+                    set_edit = not set_edit
+                    if not set_edit:
+                        settings.save(cfg)
+                    settings.draw(c, cfg, set_index, set_edit)
+                    show_partial(c)
+                elif ev & LONG:
+                    settings.save(cfg)
+                    set_edit = False
+                    screen = "menu"
+                    hints = build_hints()      # 全刷间隔可能刚改过
                     draw_main(c, index, hints)
                     c.show()
 
