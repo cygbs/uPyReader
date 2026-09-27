@@ -112,3 +112,17 @@ def draw_footer(c, left_text, right_text=None):
     font.draw(fb, left_text, 10, fy)
     if right_text:
         text_right(c, right_text, c.width - 10, fy)
+
+
+def draw_kv(c, rows, top, label_x=12, label_w=96, value_pad=12):
+    """两列信息页: 左边标签, 右边值(值过长自动折行, 续行与值列对齐)。
+    rows: [(label, value), ...]  返回结束后的 y。"""
+    fb = c.fb
+    font = c.font
+    vx = label_x + label_w
+    y = top
+    for label, value in rows:
+        font.draw(fb, label, label_x, y)
+        y = font.draw_wrapped(fb, str(value), vx, y, c.width - value_pad)
+        y += 2
+    return y

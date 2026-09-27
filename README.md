@@ -9,8 +9,11 @@
 │   ├── epd_test.py             # 中文显示测试（独立诊断工具）
 │   └── library/
 │       ├── hwconfig.py         # ★ 引脚/硬件参数的唯一配置源
-│       ├── ui.py               # 画布 + 文本对齐 + 列表菜单
+│       ├── ui.py               # 画布 + 文本对齐 + 列表菜单 + 信息页
 │       ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
+│       ├── sdcard.py           # SPI TF 卡挂载 / 容量（FAT32 + MBR）
+│       ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
+│       ├── about.py            # “关于本机”页面
 │       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
 │       └── unifont.py          # UFB1 位图字库读取 + 渲染
 ├── assets/                     # 资源 → 设备根目录
@@ -31,10 +34,14 @@
 │   ├── hwconfig.py
 │   ├── ui.py
 │   ├── rotary.py
+│   ├── sdcard.py
+│   ├── sysinfo.py
+│   ├── about.py
 │   ├── epd_ssd1619.py
 │   └── unifont.py
-└── fonts/
-    └── unifont16.bin
+├── fonts/
+│   └── unifont16.bin
+└── sd/                       ← TF 卡挂载点（运行时自动挂载）
 ```
 
 - 屏幕：HINK-E042A13-A0 4.2" 400×300 黑白，控制芯片 SSD1619（或 UC8151D，指令同族）
@@ -77,6 +84,51 @@
 
 - 三个脚都启用**内部上拉**；模块自带 10k 上拉也没影响。
 - 手感不对（转一格跳太多/太少）→ 用 `main.encoder_debug()` 校准 `ENC_STEPS_PER_DETENT`。
+
+### SPI TF 卡（microSD）
+
+| 模块丝印 | 含义 | 默认接到 | 变量 |
+|---|---|---|---|
+| `VCC` | 电源（**见下方供电说明**） | 5V 或 3V3 | — |
+| `GND` | 地 | GND | — |
+| `SCK` / `CLK` | SPI 时钟 | GPIO **13** | `SD_SCK` |
+| `MOSI` / `CMD` | 数据出 | GPIO **14** | `SD_MOSI` |
+| `MISO` / `D0` | 数据入 | GPIO **15** | `SD_MISO` |
+| `CS` / `D3` | 片选 | GPIO **16** | `SD_CS` |
+
+**为什么不能和屏幕共用 SPI**（这一点和 Arduino 不一样）：
+MicroPython 的 `machine.SDCard` 在 SPI 模式下要求**独占一个 SPI 主机**，
+源码里会直接检查并报错：
+
+```c
+if (self->host.slot != sdspi_handle) {
+    // MicroPython restriction: the SPI bus must be exclusively for the SD card.
+    spi_bus_free(spi_host_id);
+    mp_raise_ValueError(MP_ERROR_TEXT("SPI bus already in use"));
+}
+```
+
+官方文档也说得很明确：“SPI mode makes use of a SPI host peripheral, which cannot
+concurrently be used for other SPI interactions.” 所以只能**各占一个主机**。
+ESP32-S3 正好有两个：
+
+| | SPI 主机 | `machine.SPI` id | SDCard slot |
+|---|---|---|---|
+| 屏幕 | **SPI2_HOST** | `SPI(1)` | — |
+| TF 卡 | **SPI3_HOST** | `SPI(2)` | **slot=2** |
+
+（源码 `spi_dev_defaults[]`：slot 2 → `SPI3_HOST`，slot 3 → `SPI2_HOST`。
+`hwconfig.SD_SLOTS = (2, 3)` 会按顺序尝试，万一改了 `EPD_SPI_ID` 也能自动选到空闲主机。）
+
+**供电注意**：很多 microSD 模块板载 AMS1117 / 电平转换，`VCC` 需要接 **5V**
+才能稳定输出 3.3V（AMS1117 压差大，接 3V3 时卡实际只得 ~2.3V，会识别不到）。
+裸 3.3V 模块就接 3V3。信号脚一律 3.3V 逻辑，不要接 5V 信号。
+
+**卡的格式**：直接用 PC 上普通工具格式化成 **FAT32**（MBR 分区表）即可，
+不需要额外处理 —— FatFs 内置 FDISK/MBR 解析（先读扇区 0，不是 FAT 引导扇区就
+当 MBR 解析分区表，再读分区引导扇区）。
+
+`hwconfig.SD_FREQS = (20M, 10M, 4M)` 会降频重试，杜邦线太长/模块差时会自动降速。
 
 注意：
 - `SDI` = MOSI（ESP32 输出数据给屏幕），`SCLK` = 时钟。屏是只写设备，
@@ -177,12 +229,12 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 ```
 ┌ 阅读器主菜单 ─────────────────── v0.1 ┐
 │ ▶ 继续阅读                  无记录   │  ← 选中项整行反白 + ▶
-│   浏览文件                内部存储   │
-│   关于本机          ESP32-S3-N16R8   │
+│   浏览文件                  30 GB    │  ← TF 卡容量
+│   关于本机                ESP32-S3   │
 │   固件设置              MicroPython  │
 │   插件                        0 个   │
 ├─────────────────────────────────────┤
-│ 旋转选择   按下确认              1/5 │
+│ 旋转选择   按下确认                  │
 └─────────────────────────────────────┘
 ```
 
@@ -191,8 +243,32 @@ mpremote connect $PORT exec "import epd_test; epd_test.run_all()"
 | 动作 | 效果 |
 |---|---|
 | 旋转编码器 | 上下移动选中项（循环，首尾相接） |
-| 按下按键 | 底部提示「已选择：xxx · 子页面待实现」，1.5 s 后恢复 |
-| 长按 | 预留给「返回」（当前未使用） |
+| 按下「关于本机」 | 进入子页面 |
+| 按下其它项 | 底部提示「已选择：xxx · 子页面待实现」，1.5 s 后恢复 |
+| 长按 | 主界面暂未使用；子页面里是「返回」 |
+
+### 「关于本机」页面
+
+```
+┌ 关于本机 ──────────────────────────┐
+│ 芯片    ESP32-S3                    │
+│ 模块    Generic ESP32S3 module      │
+│         with Octal-SPIRAM           │
+│ 固件    v1.29.0  ESP32_GENERIC_S3-  │
+│         SPIRAM_OCT-20260824-v1.29.0 │
+│ 主频    240 MHz                     │
+│ Flash   16 MB                       │
+│ PSRAM   8 MB                        │
+│ TF 卡   29.8 GB 可用 29.0 GB @10MHz │
+│ MAC     7C:DF:A1:12:34:56           │
+├─────────────────────────────────────┤
+│ 按下或长按返回                       │
+└─────────────────────────────────────┘
+```
+
+数据来源见 `library/sysinfo.py`：**Flash** 由自动创建的 `vfs` 分区末端推断，
+**PSRAM** 取 IDF 堆区里最大的一块，**TF 容量**用 `os.statvfs()`。
+打开这一页会**再挂载一次 TF 卡**，所以插上卡后进来就能看到容量。
 
 - 光标移动走**窗口局部刷新**（`epd.display_partial_rect()`）：只写、只驱动受影响的那两行
   （约 92/300 行），其余像素完全不动。连续移动 15 次后自动插一次全刷清残影。

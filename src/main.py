@@ -2,12 +2,13 @@
 """
 main.py — 墨水屏阅读器 主界面(设备开机自动运行)
 
-硬件: ESP32-S3-N16R8 + SSD1619 4.2" 400x300 + 增量式旋转编码器(带按键)
+硬件: ESP32-S3-N16R8 + SSD1619 4.2" 400x300 + 增量式旋转编码器 + SPI TF 卡
 接线: 见 library/hwconfig.py
 
 操作:
     旋转编码器  -> 上下选择
-    按下按键    -> 确认(当前只做视觉反馈, 子页面待实现)
+    按下按键    -> 确认(关于本机会进入子页面; 其余项暂只做视觉反馈)
+    长按        -> 子页面里返回; 主界面暂未使用
 
 REPL 辅助:
     import main; main.encoder_debug()    # 校准编码器手感 / 确认接线
@@ -49,27 +50,56 @@ from epd_ssd1619 import EPD_SSD1619
 from unifont import Unifont
 from rotary import Rotary, PRESS, RELEASE, CLICK, LONG
 import ui
+import sdcard
+import sysinfo
+import about
 
 
 APP_VERSION = "v0.1"
-
-# --------------------------------------------------------------------------- #
-# 主菜单内容
-#   hint = None 表示运行时计算
-# --------------------------------------------------------------------------- #
-MENU = (
-    ("继续阅读", "无记录"),
-    ("浏览文件", "内部存储"),
-    ("关于本机", "ESP32-S3-N16R8"),
-    ("固件设置", "MicroPython"),
-    ("插件", None),
-)
 
 LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
 PARTIAL_LIMIT = 15       # 连续局刷多少次后插一次全刷(清残影)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
+
+
+# --------------------------------------------------------------------------- #
+# 菜单项与右侧提示
+# --------------------------------------------------------------------------- #
+def hint_reading():
+    return "无记录"
+
+
+def hint_sd():
+    total, free = sdcard.capacity()
+    if not total:
+        return "无卡"
+    if total >= (1 << 30):
+        return "%.0f GB" % (total / (1 << 30))
+    return "%.0f MB" % (total / (1 << 20))
+
+
+def hint_chip():
+    return sysinfo.chip_name()
+
+
+def hint_fw():
+    return "MicroPython"
+
+
+def hint_plugins():
+    return "%d 个" % count_plugins()
+
+
+MENU = (
+    ("继续阅读", hint_reading),
+    ("浏览文件", hint_sd),
+    ("关于本机", hint_chip),
+    ("固件设置", hint_fw),
+    ("插件", hint_plugins),
+)
+IDX_ABOUT = 2
 
 
 # --------------------------------------------------------------------------- #
@@ -144,10 +174,7 @@ def setup():
 # 界面
 # --------------------------------------------------------------------------- #
 def build_hints():
-    out = []
-    for _, hint in MENU:
-        out.append(("%d 个" % count_plugins()) if hint is None else hint)
-    return out
+    return [fn() for _, fn in MENU]
 
 
 def draw_main(c, index, hints):
@@ -194,6 +221,18 @@ def refresh_bands(c, bands):
     return 1
 
 
+def show_toast(c, left, right=None):
+    ui.draw_footer(c, left, right)
+    y0, y1 = footer_band(c)
+    c.show_rect(0, y0, c.width, y1 - y0)
+
+
+def open_about(c):
+    """进入"关于本机"(顺带再试一次挂载 TF 卡, 插卡后进来即可看到容量)。"""
+    about.draw(c)
+    return c.show("full")
+
+
 # --------------------------------------------------------------------------- #
 # 主循环
 # --------------------------------------------------------------------------- #
@@ -202,8 +241,18 @@ def main():
     enc = Rotary(ENC_A, ENC_B, ENC_KEY,
                  steps_per_detent=ENC_STEPS_PER_DETENT, long_ms=ENC_LONG_MS)
 
+    # 上电先尝试挂载 TF 卡(失败不影响主界面, 只影响提示与"关于本机")
+    sd, freq = sdcard.ensure_mounted()
+    if sd is not None:
+        total, free = sdcard.capacity()
+        print("TF 卡已挂载 @%d MHz, 容量 %s" % (freq // 1000000,
+                                              sysinfo.fmt_size(total)))
+    else:
+        print("TF 卡未挂载: %s" % sdcard.last_error())
+
     hints = build_hints()
     index = 0
+    screen = "menu"
     draw_main(c, index, hints)
     ms = c.show("full")
     print("主界面就绪(首屏 %d ms)。旋转=选择, 按下=确认。" % ms)
@@ -214,40 +263,51 @@ def main():
     try:
         while True:
             enc.update()
-
-            # ---- 旋转: 移动光标(只刷新受影响的那两行) ----
             d = enc.take_steps()
-            if d:
-                old = index
-                index = (index + d) % len(MENU)
-                draw_main(c, index, hints)
-                bands = [item_band(old), item_band(index)]
-                if toast_until:
-                    bands.append(footer_band(c))     # 顺带把提示恢复掉
-                    toast_until = 0
-                partial_n += refresh_bands(c, bands)
-                if partial_n >= PARTIAL_LIMIT:       # 定期全刷清残影
-                    partial_n = 0
-                    c.show("full")
-
-            # ---- 按键 ----
             ev = enc.take_events()
-            if ev & CLICK:
-                ui.draw_footer(c, "已选择：%s" % MENU[index][0], "子页面待实现")
-                y0, y1 = footer_band(c)
-                c.show_rect(0, y0, c.width, y1 - y0)
-                toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
-            elif ev & LONG:
-                ui.draw_footer(c, "长按(暂未使用)", "返回")
-                y0, y1 = footer_band(c)
-                c.show_rect(0, y0, c.width, y1 - y0)
-                toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
 
-            # ---- 提示超时后只恢复底部那一小条 ----
-            if toast_until and time.ticks_diff(time.ticks_ms(), toast_until) >= 0:
-                draw_main(c, index, hints)
-                refresh_bands(c, [footer_band(c)])
-                toast_until = 0
+            if screen == "menu":
+                # ---- 旋转: 移动光标(只刷新受影响的那两行) ----
+                if d:
+                    old = index
+                    index = (index + d) % len(MENU)
+                    draw_main(c, index, hints)
+                    bands = [item_band(old), item_band(index)]
+                    if toast_until:
+                        bands.append(footer_band(c))     # 顺带把提示恢复掉
+                        toast_until = 0
+                    partial_n += refresh_bands(c, bands)
+                    if partial_n >= PARTIAL_LIMIT:       # 定期全刷清残影
+                        partial_n = 0
+                        c.show("full")
+
+                # ---- 按键 ----
+                if ev & CLICK:
+                    if index == IDX_ABOUT:
+                        open_about(c)
+                        screen = "about"
+                    else:
+                        show_toast(c, "已选择：%s" % MENU[index][0],
+                                   "子页面待实现")
+                        toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
+                elif ev & LONG:
+                    show_toast(c, "长按(暂未使用)", "返回")
+                    toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
+
+                # ---- 提示超时后只恢复底部那一小条 ----
+                if toast_until and time.ticks_diff(time.ticks_ms(), toast_until) >= 0:
+                    draw_main(c, index, hints)
+                    refresh_bands(c, [footer_band(c)])
+                    toast_until = 0
+
+            else:
+                # ---- 关于本机: 按一下或长按都返回主界面 ----
+                if ev & (CLICK | LONG):
+                    screen = "menu"
+                    toast_until = 0
+                    hints = build_hints()        # TF 卡容量可能刚变化
+                    draw_main(c, index, hints)
+                    c.show("full")
 
             time.sleep_ms(5)
 
