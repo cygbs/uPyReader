@@ -32,24 +32,17 @@ class Canvas:
                 self._fast = False
         return bytes(b ^ 0xFF for b in self.buf)
 
-    def show(self, mode="full"):
-        """送显, 返回耗时(ms)。mode: 'full' | 'fast' | 'partial'。"""
+    def show(self):
+        """整帧全刷, 返回耗时(ms)。用于首屏/清残影。"""
         t0 = time.ticks_ms()
         panel = self.to_panel()
-        self.epd.display(panel, mode=mode)
+        self.epd.display(panel)
         self._prev_panel = panel          # 记住当前显示帧, 供后续局刷做差分基线
         return time.ticks_diff(time.ticks_ms(), t0)
 
-    def show_rect(self, x, y, w, h):
-        """窗口局部刷新: 只驱动 (x,y,w,h) 这块区域, 返回耗时(ms)。
-        比 show('partial') 快得多 —— 后者会把整屏都驱动一遍。"""
-        t0 = time.ticks_ms()
-        self.epd.display_partial_rect(self.to_panel(), x, y, w, h)
-        return time.ticks_diff(time.ticks_ms(), t0)
-
     def show_lut(self, lut):
-        """用自定义 LUT 送显(局刷/快刷波形), 返回耗时(ms)。
-        lut 见 epd.display_lut()。"""
+        """用自定义 LUT 局刷送显(不闪), 返回耗时(ms)。
+        lut 见 epdlut.py。"""
         t0 = time.ticks_ms()
         panel = self.to_panel()
         self.epd.display_lut(panel, lut, self._prev_panel)
@@ -60,10 +53,6 @@ class Canvas:
 # --------------------------------------------------------------------------- #
 # 文本
 # --------------------------------------------------------------------------- #
-def text_left(c, s, x, y, ink=1):
-    return c.font.draw(c.fb, s, x, y, ink)
-
-
 def text_center(c, s, y, ink=1):
     x = (c.width - c.font.text_width(s)) // 2
     return c.font.draw(c.fb, s, x, y, ink)

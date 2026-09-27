@@ -289,9 +289,6 @@ class Book:
     def page_no(self):
         return self.idx + 1
 
-    def at_end(self):
-        return self.next_off >= self.size
-
     # ------------------------------------------------------------------ 翻页
     def next_page(self):
         cur = self.starts[self.idx]

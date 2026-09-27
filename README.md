@@ -13,6 +13,7 @@
 │       ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
 │       ├── about.py            # “关于本机”页面
 │       ├── reader.py           # 小说浏览 / 分页 / 阅读进度
+│       ├── epdlut.py           # 从面板 OTP 读波形并裁成不闪的局刷 LUT
 │       ├── epd_ssd1619.py      # 驱动：HINK-E042A13-A0 / SSD1619 4.2" 400x300
 │       └── unifont.py          # UFB1 位图字库读取 + 渲染
 ├── assets/                     # 资源 → 设备根目录
@@ -223,13 +224,9 @@ mpremote connect $PORT exec "import main; main.main()"
 数据来源见 `library/sysinfo.py`：**Flash** 由自动创建的 `vfs` 分区末端推断，
 **PSRAM** 取 IDF 堆区里最大的一块。
 
-- 光标移动走**窗口局部刷新**（`epd.display_partial_rect()`）：只写、只驱动受影响的那两行
-  （约 92/300 行），其余像素完全不动。连续移动 15 次后自动插一次全刷清残影。
-- 底部提示保持**静态**（不放会变化的计数）—— 否则每次移动都要多刷一条底部区域。
-- 局部刷新用的是 `0x3C=0x80` + `0x21=0x00 0x00` 快刷序列（Waveshare 4.2" V2 官方做法）：
-  不复位、不重新加载波形，直接复用面板里已有的 LUT。少了这两步，局部刷新会退化成
-  “整屏重画”，又慢又闪。
-- 回绕（最后一项 → 第一项）时脏区分散，会合并成一个窗口**一次激活**（比两次激活快）。
+- 光标移动/翻页统一走**自裁局刷 LUT**送显：**不闪**，约 2.1s；**每 8 次**
+  （`FULL_EVERY`）插一次 OTP 全刷清残影。原理见下面「不闪的翻页（局刷 LUT）」。
+- 选中项画一圈方框 + `▶`，行间用虚线 —— 比整行反白黑块像素变化更少，更适合局刷。
 - **子页面**：「关于本机」已实现；文件列表/阅读界面见下。
 - `main.py` 是死循环；要回 REPL 按 `Ctrl-C`，脚本会优雅退出并让屏休眠。
 
@@ -293,9 +290,9 @@ SYNC_BOOKS=1 CHMOD=0 tools/upload.sh   # 上传代码 + 小说(小说大, 传输
 3. 翻页时用 `0x32` 写回这张 LUT，再用 **`0x22=0xCF`**（`MODE1|MODE2`，
    **不带 `LOAD_LUT`**，否则会被 OTP 覆盖）触发。
 
-效果：翻页 ~2.5s、**不闪**、字很实，只有文字本身在轻微变化。普通页用局刷，
-**每 `FULL_EVERY=8` 页**用 OTP 全刷一次清残影。相关代码：
-`main.read_otp_lut() / main.make_partial_lut()`、`epd.display_lut()`、
+效果：翻页 ~2.1s、**不闪**，只有文字本身在轻微变化。普通次用局刷，
+**每 `FULL_EVERY=8` 次移动/翻页**用 OTP 全刷一次清残影。相关代码：
+`epdlut.read_otp_lut() / epdlut.make_partial_lut()`、`epd.display_lut()`、
 `Canvas.show_lut()`。
 
 REPL 辅助：
@@ -408,10 +405,10 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 **画面上下/左右颠倒**
 - 驱动里的 Data Entry Mode / X、Y 窗口是按 400×300 整帧写的。若需要翻转，在 `display()` 前把 `buf` 旋转 180°（可用 `framebuf` 的 `fb.scroll` 变通或自己做映射）。
 
-**局部刷新残影很重 / 仍然整屏闪**
-- 主界面已按官方序列做窗口局刷。若仍异常，可在 `main.py` 里把 `refresh_bands()` 换成
-  `c.show("partial")`（整屏局部波形）对比试试，或把 `PARTIAL_LIMIT` 调小（更频繁全刷）。
-- 不同批次模组的波形表可能不同，必要时试 `epd.init_min()` 做初始化。
+**局刷发虚 / 残影很重 / 仍然整屏闪**
+- 局刷确实会累积残影，把 `main.py` 的 `FULL_EVERY` 调小（更频繁全刷）即可。
+- 字发虚说明局刷波形驱动不足，调大 `PARTIAL_REP`（更“实”、更慢）。
+- 不同批次模组的 OTP 波形可能不同，必要时试 `epd.init_min()` 重新初始化。
 
 **报 `ImportError: can't import epd_ssd1619` / `unifont`**
 - 驱动/字库模块没上传成功。用 `mpremote connect PORT fs tree :` 看一下，
@@ -422,7 +419,7 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
   再 `tools/upload.sh`，设备上应存在 `/fonts/unifont16.bin`。
 
 **想省电**
-- 显示完调 `epd.sleep()`，再次显示时 `c.show(...)` 会自动重新初始化。
+- 显示完调 `epd.sleep()`，再次显示时 `c.show()` 会自动重新初始化。
 
 ---
 
@@ -433,6 +430,6 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 - **整页缓存**：把渲染好的整页（15 KB）存进 PSRAM，翻页只做一次取反 + 送显，
   渲染成本几乎为零，瓶颈只剩墨水屏刷新本身。
 - **分页索引 / 目录**：章节识别、跳章、书签。
-- **快刷翻页**：用 `epd.init_fast()` + `c.show("fast")` 把每页 3.5s 降到 ~1s，
-  每 N 页插一次全刷清残影。
+- **调局刷速度/画质**：改 `main.py` 的 `PARTIAL_REP`（驱动强度）和 `FULL_EVERY`
+  （全刷频率），或改 `epdlut.py` 里的 `PHASES` / `KEEP_GROUP` 重新裁波形。
 - **插件接口**：`/plugins/<name>/main.py` + `register(api)`；插件商店走 MicroPython 自带 `mip`。
