@@ -274,7 +274,10 @@ def open_continue(c):
 # 主循环
 # --------------------------------------------------------------------------- #
 def main():
-    global PARTIAL_LUT
+    # 注意: PARTIAL_OTP 也必须声明 global —— 否则 main() 里对它的赋值会变成
+    #       局部变量, 而 apply_settings() 读的是全局 None, 导致改“局刷深度”
+    #       必须重启才生效。
+    global PARTIAL_OTP, PARTIAL_LUT
 
     epd, c = setup()
     enc = Rotary(ENC_A, ENC_B, ENC_KEY,
