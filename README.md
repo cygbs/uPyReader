@@ -457,6 +457,29 @@ c.show("partial")          # 0xFF，只重画变化区域，约 1 s
   `c.show("partial")`（整屏局部波形）对比试试，或把 `PARTIAL_LIMIT` 调小（更频繁全刷）。
 - 不同批次模组的波形表可能不同，必要时试 `epd.init_min()` 做初始化。
 
+**TF 卡显示「未挂载」**
+
+先在 REPL 里跑诊断（会把每个组合的真实错误都打出来，并直接读扇区 0）:
+
+```python
+import sdtest
+sdtest.run()
+```
+
+按输出分两类：
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| `卡无响应(读扇区0失败)` / `ENODEV` / `EIO` | **供电不足** —— 多数 microSD 模块板载 AMS1117，接 3V3 时卡实际只得 ~2.3V | 把模块 `VCC` 改接 **5V**（开发板 USB 供电时有 5V/VBUS 脚）；信号脚仍是 3.3V |
+| 换 5V 后仍无响应 | MISO / CS 接错 | 核对模块丝印：`D0=MISO`、`D3=CS`、`CMD=MOSI`、`CLK=SCK` |
+| `卡有响应` 但 `挂载失败` | FatFs 不认这个文件系统（exFAT / 未格式化） | 在 PC 上格成 **FAT32 + MBR** |
+| `SPI bus already in use`（出现在 slot3） | **正常现象** —— slot3 是屏幕占用的 SPI2_HOST | 忽略，真错误看第一条 |
+
+想直接看所有尝试记录：`import sdcard; print(sdcard.attempts())`
+
+> 提醒：降频重试对“卡完全不响应”是没用的 —— SD 卡初始化本来就在 400 kHz 下做，
+> 频率只影响初始化之后的速度。三个频率都报同样的错，基本就是硬件层的问题。
+
 **报 `ImportError: can't import epd_ssd1619` / `unifont`**
 - 驱动/字库模块没上传成功。用 `mpremote connect PORT fs tree :` 看一下，
   应存在 `/library/epd_ssd1619.py` 与 `/library/unifont.py`。

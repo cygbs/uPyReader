@@ -31,14 +31,7 @@ from hwconfig import (
     SD_SCK, SD_MOSI, SD_MISO, SD_CS, SD_SLOTS, SD_FREQS, SD_MOUNT,
 )
 
-_state = {"sd": None, "freq": 0, "err": None, "mount": SD_MOUNT}
-
-
-def _vfs_fat(sd):
-    if vfs is not None:
-        return vfs.VfsFat(sd)
-    import os as _os                      # 极老固件的退路
-    return _os.VfsFat(sd)
+_state = {"sd": None, "freq": 0, "err": None, "attempts": [], "mount": SD_MOUNT}
 
 
 def mounted(mount_point=None):
@@ -54,15 +47,21 @@ def mounted(mount_point=None):
 
 
 def mount(mount_point=SD_MOUNT):
-    """挂载 TF 卡。成功返回 (sdcard, freq)，失败返回 (None, 错误描述)。"""
+    """挂载 TF 卡。成功返回 (sdcard, freq)，失败返回 (None, 错误描述)。
+
+    会按 SD_SLOTS × SD_FREQS 逐个尝试, 并把**每一次**的失败原因记下来。
+    last_error() 返回**第一次**失败的原因(那才是卡/接线的真实问题;
+    后面的 slot3 失败往往是 "SPI bus already in use", 那是预期内的)。
+    """
     _state["mount"] = mount_point
     if _state["sd"] is not None:
         return _state["sd"], _state["freq"]
     if SDCard is None:
         _state["err"] = "本固件没有 machine.SDCard"
+        _state["attempts"] = [_state["err"]]
         return None, _state["err"]
 
-    last = "未尝试"
+    attempts = []
     for slot in SD_SLOTS:
         for freq in SD_FREQS:
             try:
@@ -70,12 +69,12 @@ def mount(mount_point=SD_MOUNT):
                             miso=Pin(SD_MISO), cs=Pin(SD_CS), freq=freq)
             except (OSError, ValueError) as e:
                 # 该 slot 的 SPI 主机被占用 / 引脚非法 -> 换下一个 slot
-                last = "slot%d: %s" % (slot, e)
+                attempts.append("slot%d: %s" % (slot, e))
                 break
             try:
-                vfs_mount(_vfs_fat(sd), mount_point)
+                mount_fs(sd, mount_point)
             except OSError as e:
-                last = "slot%d@%dMHz: %s" % (slot, freq // 1000000, e)
+                attempts.append("slot%d@%dMHz: %s" % (slot, freq // 1000000, e))
                 try:
                     sd.deinit()
                 except Exception:
@@ -84,17 +83,20 @@ def mount(mount_point=SD_MOUNT):
             _state["sd"] = sd
             _state["freq"] = freq
             _state["err"] = None
+            _state["attempts"] = attempts
             return sd, freq
 
-    _state["err"] = last
-    return None, last
+    _state["attempts"] = attempts
+    _state["err"] = attempts[0] if attempts else "未尝试"
+    return None, _state["err"]
 
 
-def vfs_mount(fat, mount_point):
+def mount_fs(sd, mount_point):
+    """真正执行挂载。优先用 vfs.VfsFat, 退回 os.mount。"""
     if vfs is not None:
-        vfs.mount(fat, mount_point)
+        vfs.mount(vfs.VfsFat(sd), mount_point)
     else:
-        os.mount(fat, mount_point)
+        os.mount(sd, mount_point)
 
 
 def ensure_mounted(mount_point=SD_MOUNT):
@@ -134,6 +136,11 @@ def capacity(mount_point=None):
 
 def last_error():
     return _state["err"]
+
+
+def attempts():
+    """所有尝试过的 (slot@频率) 及失败原因, 便于调优。"""
+    return list(_state["attempts"])
 
 
 def speed_mhz():
