@@ -60,12 +60,14 @@ APP_VERSION = "v0.2"
 LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
 FILE_ROWS = 5            # 文件列表一屏显示行数
-PARTIAL_LIMIT = 15       # 菜单连续局刷多少次后插一次全刷(清残影)
-FULL_EVERY = 8           # 阅读时每翻多少页插一次全刷(其余页用不闪的局刷 LUT)
+FULL_EVERY = 8           # 每翻/移动多少次插一次全刷(其余用不闪的局刷 LUT)
 PARTIAL_REP = 8          # 局刷波形里第 3 组的重复次数(越大字越"实", 越慢)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"
+
+# 运行期由 main() 填入: 从面板 OTP 读出并裁短的局刷波形(与阅读翻页同一套)
+PARTIAL_LUT = None
 
 
 # --------------------------------------------------------------------------- #
@@ -281,48 +283,24 @@ def draw_main(c, index, hints):
     c.fb.fill(0)
     ui.title_bar(c, "阅读器主菜单", APP_VERSION)
     ui.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints)
-    # 底部提示保持静态(不放会变化的计数), 这样移动光标时只需刷新列表那两行
     ui.draw_footer(c, FOOT_HINT)
 
 
-def row_band(i):
-    """第 i 项占据的 y 区间(半开)。"""
-    y0 = LIST_TOP + i * ROW_H
-    return (y0, y0 + ROW_H)
-
-
-def footer_band(c):
-    lh = c.font.line_height
-    return (c.height - lh - 12, c.height)
-
-
-def refresh_bands(c, bands):
-    """把脏区 y 区间合并后做一次窗口局部刷新。返回刷新的窗口数(总是 1)。
-
-    先合并相邻区间(光标移一格 -> 两个相邻行合并成一条, 只驱动 ~2 行高度);
-    如果还有不相邻的区间(例如从最后一项回绕到第一项), 再合并成一个大窗口 ——
-    因为局部波形的一次激活耗时基本固定, 一次扫完比分两次激活更快。
-    """
-    bs = sorted(b for b in bands if b and b[1] > b[0])
-    if not bs:
-        return 0
-    merged = []
-    for y0, y1 in bs:
-        if merged and y0 <= merged[-1][1]:
-            if y1 > merged[-1][1]:
-                merged[-1][1] = y1
-        else:
-            merged.append([y0, y1])
-    if len(merged) > 1:
-        merged = [[merged[0][0], merged[-1][1]]]
-    c.show_rect(0, merged[0][0], c.width, merged[0][1] - merged[0][0])
-    return 1
+def show_partial(c):
+    """用自裁局刷 LUT 刷新整屏(不闪, 和阅读翻页同一套处理)。
+    没有 LUT 或刷新失败时回退全刷。"""
+    if PARTIAL_LUT is not None:
+        try:
+            c.show_lut(PARTIAL_LUT)
+            return
+        except Exception as e:
+            print("局刷失败, 回退全刷:", e)
+    c.show("full")
 
 
 def show_toast(c, left, right=None):
     ui.draw_footer(c, left, right)
-    y0, y1 = footer_band(c)
-    c.show_rect(0, y0, c.width, y1 - y0)
+    show_partial(c)
 
 
 def open_about(c):
@@ -385,10 +363,11 @@ def main():
                  steps_per_detent=ENC_STEPS_PER_DETENT, long_ms=ENC_LONG_MS)
 
     # 读一次面板 OTP 波形并裁成局刷 LUT(失败则退化为全刷)
+    global PARTIAL_LUT
     otp_lut = read_otp_lut(epd)
-    partial_lut = make_partial_lut(otp_lut)
-    if partial_lut is None:
-        print("未能取得局刷 LUT, 翻页将使用全刷")
+    PARTIAL_LUT = make_partial_lut(otp_lut)
+    if PARTIAL_LUT is None:
+        print("未能取得局刷 LUT, 将使用全刷")
     else:
         print("局刷 LUT 就绪 (OTP %d 字节, g3 repeat=%d)" % (len(otp_lut), PARTIAL_REP))
 
@@ -400,12 +379,13 @@ def main():
     book_scroll = 0
     book = None
     page_turns = 0
+    menu_moves = 0
+    file_moves = 0
 
     draw_main(c, index, hints)
     ms = c.show("full")
     print("主界面就绪(首屏 %d ms)。旋转=选择, 按下=确认。" % ms)
 
-    partial_n = 0
     toast_until = 0
 
     try:
@@ -417,17 +397,14 @@ def main():
             if screen == "menu":
                 # ---- 旋转: 移动光标(只刷新受影响的那两行) ----
                 if d:
-                    old = index
                     index = (index + d) % len(MENU)
                     draw_main(c, index, hints)
-                    bands = [row_band(old), row_band(index)]
-                    if toast_until:
-                        bands.append(footer_band(c))     # 顺带把提示恢复掉
-                        toast_until = 0
-                    partial_n += refresh_bands(c, bands)
-                    if partial_n >= PARTIAL_LIMIT:       # 定期全刷清残影
-                        partial_n = 0
-                        c.show("full")
+                    toast_until = 0
+                    menu_moves += 1
+                    if PARTIAL_LUT is None or menu_moves % FULL_EVERY == 0:
+                        c.show("full")          # 每 FULL_EVERY 次插一次全刷清残影
+                    else:
+                        show_partial(c)         # 和阅读翻页同一套不闪局刷
 
                 # ---- 按键 ----
                 if ev & CLICK:
@@ -461,27 +438,23 @@ def main():
                 # ---- 提示超时后只恢复底部那一小条 ----
                 if toast_until and time.ticks_diff(time.ticks_ms(), toast_until) >= 0:
                     draw_main(c, index, hints)
-                    refresh_bands(c, [footer_band(c)])
+                    show_partial(c)
                     toast_until = 0
 
             elif screen == "files":
                 # ---- 旋转: 移动文件选择 ----
                 if d and books:
-                    old = book_i
-                    old_scroll = book_scroll
                     book_i = (book_i + d) % len(books)
                     if book_i < book_scroll:
                         book_scroll = book_i
                     elif book_i >= book_scroll + FILE_ROWS:
                         book_scroll = book_i - FILE_ROWS + 1
                     draw_files(c, books, book_i, book_scroll)
-                    if old_scroll != book_scroll:
-                        # 整屏都换了, 刷整块列表
-                        c.show_rect(0, LIST_TOP - 4, c.width,
-                                    FILE_ROWS * ROW_H + 8)
+                    file_moves += 1
+                    if PARTIAL_LUT is None or file_moves % FULL_EVERY == 0:
+                        c.show("full")
                     else:
-                        refresh_bands(c, [row_band(old - book_scroll),
-                                          row_band(book_i - book_scroll)])
+                        show_partial(c)
 
                 if ev & CLICK:
                     if books:
@@ -515,20 +488,12 @@ def main():
                     if turned:
                         reader.draw(c, book)
                         page_turns += turned
-                        # 平时用自裁的局刷 LUT(不闪); 每 FULL_EVERY 页用 OTP 全刷清残影
-                        do_full = partial_lut is None or \
-                            page_turns // FULL_EVERY != prev_turns // FULL_EVERY
-                        try:
-                            if do_full:
-                                c.show("full")
-                            else:
-                                c.show_lut(partial_lut)
-                        except Exception as e:
-                            print("翻页刷新失败, 回退全刷:", e)
-                            try:
-                                c.show("full")
-                            except Exception:
-                                pass
+                        # 平时用自裁局刷 LUT(不闪); 每 FULL_EVERY 页用 OTP 全刷清残影
+                        if PARTIAL_LUT is None or \
+                                page_turns // FULL_EVERY != prev_turns // FULL_EVERY:
+                            c.show("full")
+                        else:
+                            show_partial(c)
 
                 # ---- 按下: 保存进度并回到主界面 ----
                 if ev & (CLICK | LONG):
