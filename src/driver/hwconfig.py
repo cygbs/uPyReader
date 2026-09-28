@@ -46,7 +46,9 @@ EPD_DC   = 9
 EPD_RST  = 8
 EPD_BUSY = 7
 EPD_SPI_ID = 1
-EPD_SPI_BAUD = 4_000_000
+# 墨水屏 SPI 时钟: SSD1619 额定 20MHz。面包板实测 20MHz 稳定(write_ram 15000B
+# 从 4MHz 的 30ms 降到 6ms)。若某些板子/飞线出现花屏, 逐级降到 10MHz / 4MHz。
+EPD_SPI_BAUD = 20_000_000
 
 # ---- 旋转编码器 ----
 ENC_A   = 4

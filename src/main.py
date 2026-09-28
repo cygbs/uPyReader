@@ -14,9 +14,9 @@ MPReader = MicroPython Reader, 基于 ESP32-S3 + SSD1619 墨水屏的阅读器�
                      不全刷:    短按 = 手动全刷一次, 长按 = 退出到主界面
                      每翻一页都会把阅读位置写进 Flash, 下次自动续读
 
-翻页/移动光标用"自裁局刷 LUT"送显(不闪), 每 FULL_EVERY 次插一次全刷清残影;
-FULL_EVERY 设为 0(设置里的「不全刷」)时软件不自动全刷, 由阅读界面短按手动触发。
-局刷 LUT 的来历见 driver/epdlut.py。
+翻页/移动光标用"自裁局刷 LUT"送显(不闪), 约 360ms(SPI 20MHz + 实测最短波形);
+每 FULL_EVERY 次插一次全刷清残影; FULL_EVERY 设为 0(设置里的「不全刷」)时软件不自动
+全刷, 由阅读界面短按手动触发。局刷 LUT 的来历见 driver/epdlut.py。
 
 REPL 辅助:
     import main; main.encoder_debug()    # 校准编码器手感 / 确认接线
@@ -66,7 +66,7 @@ FILE_ROWS = 5            # 文件列表一屏显示行数
 # 下面两项可在「固件设置」里改(默认 8), 运行期由 apply_settings() 更新
 FULL_EVERY = 8           # 每移动/翻页多少次插一次全刷(其余用不闪的局刷 LUT)
                          # 0 = 不全刷: 软件不自动全刷, 阅读界面短按手动全刷
-PARTIAL_REP = 8          # 局刷波形里保留组的 repeat(越大字越"实", 越慢)
+PARTIAL_REP = 0          # 局刷波形的 repeat-1(越大字越"实", 越慢; 0 最快≈360ms)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"

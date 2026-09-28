@@ -9,8 +9,18 @@
 #
 # 用法:
 #   from driver import epdlut
-#   lut = epdlut.load(epd, rep=8)      # 76 字节局刷 LUT; 失败返回 None
+#   lut = epdlut.load(epd, rep=0)      # 76 字节局刷 LUT; 失败返回 None
 #   canvas.show_lut(lut)               # 用这张 LUT 送显(见 ui/canvas.py)
+#
+# 参数是实测扫出来的(见 README「局刷参数调优」):
+#   KEEP_GROUP=4 (对应 vs=00 02 14 66 48) 画质最干净, gi>=5 后电压缺项会发脏;
+#   PHASES=(2,2,2,0) 总相位最短; RP=0(相位只跑一遍)。
+#   SSD1619 的 RP 是"重复次数-1": RP=0 也执行 1 遍。总时间约
+#       240ms(控制器固定开销) + 20.4ms × sum(TP) × (RP+1)
+#   本组 6 单位 -> 约 360ms。
+#
+# 注意: 全刷(0x22=0xF7)带 LOAD_LUT, 会把 OTP 波形重新灌进 0x32 覆盖这张自定义
+#       LUT, 所以每次局刷都必须重写 LUT(见 epd.display_lut)。
 
 import time
 from machine import Pin, SPI
@@ -21,9 +31,9 @@ LUT_BYTES = 76
 VS_BYTES = 35            # 波形表头部: vs(电压选择)
 GROUP_BYTES = 5          # 每个波形组 = 4 个阶段时间 + 1 个 repeat
 GROUP_COUNT = 7
-KEEP_GROUP = 3           # 只保留这一组
-PHASES = (0x03, 0x02, 0x05, 0x00)   # 实测本屏驱动能力最强的一组阶段
-DEFAULT_REP = 8          # repeat 越大字越"实"、越慢(每 +1 约 +0.2s)
+KEEP_GROUP = 4           # 只保留这一组(gi=4, 对应 vs=00 02 14 66 48, 实测最干净)
+PHASES = (0x02, 0x02, 0x02, 0x00)   # 实测最短相位(总 6), 画质可接受
+DEFAULT_REP = 0          # 相位重复次数-1: 0 = 只跑一遍(最快, 约 360ms)
 
 
 def make_spi():
@@ -115,7 +125,8 @@ def make_partial_lut(otp, rep=DEFAULT_REP):
     """把 OTP 全刷波形裁成单阶段局刷波形(不闪)。
 
     保留 OTP 的 vs(电压选择)与尾部电压/frame 参数, 只把 7 个波形组重写成
-    KEEP_GROUP 这一组 PHASES、repeat=rep。
+    KEEP_GROUP 这一组 PHASES、repeat=rep。rep 是"相位重复次数-1", 0 也执行 1 遍;
+    越大字越黑实、越慢(每 +1 约 +20.4ms × sum(PHASES))。
     """
     if not otp or len(otp) < LUT_BYTES:
         return None
