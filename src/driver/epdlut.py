@@ -120,6 +120,32 @@ def read_otp_lut(epd, n=READ_BYTES):
     return data
 
 
+def read_temp(epd, cmd=0x1B):
+    """读面板内置温度传感器(命令 0x1B, 1 字节有符号, 单位 °C); 失败返回 None。
+
+    SSD1619 是单线半双工, 读回必须 bit-bang; 读完只重建 SPI, 【不】重新 init
+    面板, 所以不会清屏、不影响当前显示(实测约 2ms)。0x40 读的是外部传感器引脚,
+    本面板没接, 会返回 0xFF。
+    """
+    try:
+        epd.spi.deinit()
+    except Exception:
+        pass
+    data = None
+    try:
+        data = _read_via_bitbang(epd, cmd, 1)
+    except Exception as e:
+        print("读温度失败:", e)
+    try:
+        epd.spi = make_spi()
+    except Exception as e:
+        print("恢复 SPI 失败:", e)
+    if not data:
+        return None
+    b = data[0]
+    return b - 256 if b >= 128 else b
+
+
 def make_partial_lut(otp, rep=DEFAULT_REP):
     """把 OTP 全刷波形裁成单阶段局刷波形(不闪)。
 

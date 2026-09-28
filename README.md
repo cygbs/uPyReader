@@ -223,6 +223,7 @@ mpremote connect $PORT exec "import main; main.main()"
 ```
 ┌ 关于本机 ──────────────────────────┐
 │ 屏幕    HINK-E042A13-A0 SYX1802     │
+│ 温度    22 °C                       │  ← 面板内置传感器, 读一次约 2ms
 │ 模块    Generic ESP32S3 module      │
 │         with Octal-SPIRAM           │
 │ 固件    v1.29.0  ESP32_GENERIC_S3-  │
