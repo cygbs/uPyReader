@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-main.py — MPReader 主界面(设备开机自动运行)
+main.py — uPyReader 主界面(设备开机自动运行)
 
-MPReader = MicroPython Reader, 基于 ESP32-S3 + SSD1619 墨水屏的阅读器。
+uPyReader = MicroPython Reader, 基于 ESP32-S3 + SSD1619 墨水屏的阅读器。
 
 硬件: ESP32-S3-N16R8 + SSD1619 4.2" 400x300 + 增量式旋转编码器
 接线: 见 driver/hwconfig.py
@@ -222,7 +222,7 @@ def build_hints():
 
 def draw_main(c, index, hints):
     c.fb.fill(0)
-    canvas.title_bar(c, "MPReader")
+    canvas.title_bar(c, "uPyReader")
     canvas.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints)
     canvas.draw_footer(c, FOOT_HINT)
 

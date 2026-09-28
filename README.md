@@ -1,7 +1,7 @@
-# MPReader — MicroPython 墨水屏阅读器（ESP32-S3-N16R8 + SSD1619 4.2"）
+# uPyReader — MicroPython 墨水屏阅读器（ESP32-S3-N16R8 + SSD1619 4.2"）
 
 ```
-MPReader/
+uPyReader/
 ├── README.md                   # 本文档
 ├── ESP32_GENERIC_S3-...bin     # MicroPython 固件（已刷入；*.bin 不入库）
 ├── src/                        # 只放 MicroPython 源码 → 设备根目录
@@ -122,7 +122,7 @@ uv tool install mpremote
 跳过未改动文件：
 
 ```bash
-cd /home/ygbs/下载/MPReader
+cd /home/ygbs/下载/uPyReader
 chmod +x tools/upload.sh
 
 tools/upload.sh                 # 默认 /dev/ttyACM0
@@ -163,7 +163,7 @@ CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
 ### 手动命令（等价做法）
 
 ```bash
-cd /home/ygbs/下载/MPReader
+cd /home/ygbs/下载/uPyReader
 PORT=/dev/ttyACM0
 
 # 一次连接，把 src/ 下所有顶层条目复制到设备根目录
@@ -195,7 +195,7 @@ mpremote connect $PORT exec "import main; main.main()"
 上电即进主菜单：
 
 ```
-┌ MPReader ────────────────────────────┐
+┌ uPyReader ────────────────────────────┐
 │ ▶ 继续阅读                小说.txt   │  ← 选中项画方框 + ▶
 │   浏览文件                    1 本   │  ← Flash 里的 .txt 数量
 │   关于本机                ESP32-S3   │
@@ -512,3 +512,14 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 - **调局刷速度/画质**：进「固件设置」调**局刷深度** / **全刷间隔**；再底层可改
   `driver/epdlut.py` 里的 `PHASES` / `KEEP_GROUP` 重新裁波形。
 - **插件接口**：`/plugins/<name>/main.py` + `register(api)`；插件商店走 MicroPython 自带 `mip`。
+
+---
+
+## 许可证
+
+本项目以 **GNU GPLv3-or-later**（SPDX: `GPL-3.0-or-later`）发布：你可以自由
+使用、研究、修改、再分发（包括商业用途），衍生作品必须保持同样的自由、以同样
+的许可证发布。完整法律条款见 [`LICENSE`](LICENSE)。
+
+位图字库来自 **GNU Unifont**，按 **SIL OFL 1.1** 使用，见 [`NOTICE`](NOTICE)
+与 [`LICENSES/OFL-1.1.txt`](LICENSES/OFL-1.1.txt)。
