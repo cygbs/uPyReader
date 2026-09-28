@@ -9,10 +9,13 @@ MPReader = MicroPython Reader, 基于 ESP32-S3 + SSD1619 墨水屏的阅读器�
 
 操作:
     主界面/文件列表  旋转 = 选择, 按下 = 确认, 长按 = 返回
-    阅读界面         旋转 = 翻页, 按下 = 退出到主界面
+    阅读界面         旋转 = 翻页
+                     默认:      短按/长按 = 退出到主界面
+                     不全刷:    短按 = 手动全刷一次, 长按 = 退出到主界面
                      每翻一页都会把阅读位置写进 Flash, 下次自动续读
 
 翻页/移动光标用"自裁局刷 LUT"送显(不闪), 每 FULL_EVERY 次插一次全刷清残影;
+FULL_EVERY 设为 0(设置里的「不全刷」)时软件不自动全刷, 由阅读界面短按手动触发。
 局刷 LUT 的来历见 driver/epdlut.py。
 
 REPL 辅助:
@@ -62,6 +65,7 @@ ROW_H = 46               # 行高
 FILE_ROWS = 5            # 文件列表一屏显示行数
 # 下面两项可在「固件设置」里改(默认 8), 运行期由 apply_settings() 更新
 FULL_EVERY = 8           # 每移动/翻页多少次插一次全刷(其余用不闪的局刷 LUT)
+                         # 0 = 不全刷: 软件不自动全刷, 阅读界面短按手动全刷
 PARTIAL_REP = 8          # 局刷波形里保留组的 repeat(越大字越"实", 越慢)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
@@ -91,6 +95,8 @@ def hint_chip():
 
 
 def hint_fw():
+    if FULL_EVERY == settings.NO_FULL:
+        return "不全刷 / 深度 %d" % PARTIAL_REP
     return "全刷 %d / 深度 %d" % (FULL_EVERY, PARTIAL_REP)
 
 
@@ -183,8 +189,15 @@ def show_partial(c):
 
 
 def refresh_screen(c, count, prev):
-    """按计数决定刷新方式: 每 FULL_EVERY 次(跨过整数倍)插一次全刷, 其余局刷。"""
-    if PARTIAL_LUT is None or count // FULL_EVERY != prev // FULL_EVERY:
+    """按计数决定刷新方式: 每 FULL_EVERY 次(跨过整数倍)插一次全刷, 其余局刷。
+
+    FULL_EVERY == settings.NO_FULL(不全刷)时从不自动全刷, 全刷改由阅读界面
+    短按手动触发。没有局刷 LUT 时只能整帧全刷(硬件回退)。
+    """
+    if PARTIAL_LUT is None:
+        c.show()
+    elif FULL_EVERY != settings.NO_FULL and \
+            count // FULL_EVERY != prev // FULL_EVERY:
         c.show()
     else:
         show_partial(c)
@@ -297,7 +310,9 @@ def main():
     PARTIAL_OTP = epdlut.read_otp_lut(epd)
     if PARTIAL_OTP is not None:
         PARTIAL_LUT = epdlut.make_partial_lut(PARTIAL_OTP, PARTIAL_REP)
-    print("设置: 全刷间隔=%d, 局刷深度=%d" % (FULL_EVERY, PARTIAL_REP))
+    print("设置: 全刷间隔=%s, 局刷深度=%d"
+          % ("不全刷" if FULL_EVERY == settings.NO_FULL else FULL_EVERY,
+             PARTIAL_REP))
     print("局刷 LUT: %s" % ("就绪" if PARTIAL_LUT else "不可用, 将使用全刷"))
 
     hints = build_hints()
@@ -421,14 +436,25 @@ def main():
                             reader.draw(c, book)
                             refresh_screen(c, page_turns, prev)
 
-                    # ---- 按下: 保存进度并回到主界面 ----
-                    if ev & (CLICK | LONG):
+                    # ---- 按键: 长按总是保存并退出; 短按在「不全刷」模式下
+                    #      手动全刷一次(不退出), 否则也保存并退出 ----
+                    if ev & LONG:
                         book.save()
                         book = None
                         screen = "menu"
                         hints = build_hints()
                         draw_main(c, index, hints)
                         c.show()
+                    elif ev & CLICK:
+                        if FULL_EVERY == settings.NO_FULL:
+                            c.show()            # 手动全刷一次, 不退出
+                        else:
+                            book.save()
+                            book = None
+                            screen = "menu"
+                            hints = build_hints()
+                            draw_main(c, index, hints)
+                            c.show()
 
                 elif screen == "settings":
                     # ---- 旋转: 选择项目 / 调整数值 ----
