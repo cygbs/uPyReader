@@ -63,10 +63,10 @@ from ui import about, canvas, reader, settings
 LIST_TOP = 26            # 列表起始 y
 ROW_H = 46               # 行高
 FILE_ROWS = 5            # 文件列表一屏显示行数
-# 下面两项可在「固件设置」里改(默认 8), 运行期由 apply_settings() 更新
+# 下面两项可在「固件设置」里改(默认 全刷间隔 8 / 局刷深度 12), 由 apply_settings() 更新
 FULL_EVERY = 8           # 每移动/翻页多少次插一次全刷(其余用不闪的局刷 LUT)
                          # 0 = 不全刷: 软件不自动全刷, 阅读界面短按手动全刷
-PARTIAL_REP = 0          # 局刷波形的 repeat-1(越大字越"实", 越慢; 0 最快≈360ms)
+PARTIAL_REP = 12         # 局刷波形的 repeat-1(越大字越"实", 越慢)
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"
@@ -249,7 +249,7 @@ def show_toast(c, left, right=None):
 def open_about(c):
     """进入"关于本机"。"""
     about.draw(c)
-    return c.show()
+    c.show()
 
 
 # --------------------------------------------------------------------------- #
@@ -379,7 +379,7 @@ def main():
                             settings.draw(c, cfg, set_index, set_edit)
                             c.show()
                             screen = "settings"
-                        else:
+                        elif index == IDX_PLUGINS:
                             show_toast(c, "已选择：%s" % MENU[index][0],
                                        "子页面待实现")
                             toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)

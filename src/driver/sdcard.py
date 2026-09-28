@@ -35,10 +35,6 @@ def backend():
     return _BACKEND
 
 
-def frequency():
-    return _FREQ
-
-
 def is_mounted():
     try:
         os.stat(_MOUNT)

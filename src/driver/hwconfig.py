@@ -88,8 +88,6 @@ SD_FREQS = (20_000_000, 10_000_000, 5_000_000, 1_000_000)
 SD_MOUNT = "/sd"
 
 # ---- 屏幕 / 字库 ----
-WIDTH  = 400
-HEIGHT = 300
 FONT_CANDIDATES = (
     "/fonts/unifont16.bin",
     "fonts/unifont16.bin",

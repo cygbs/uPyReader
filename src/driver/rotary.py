@@ -110,12 +110,6 @@ class Rotary:
         self._ev = 0
         return e
 
-    def is_down(self):
-        return self._stable == 0
-
-    def position(self):
-        return self._steps
-
     # ------------------------------------------------------------------ 自检
     def debug(self, seconds=20, printer=print):
         """原始计数自检, 用于校准 steps_per_detent 与确认接线。

@@ -143,11 +143,6 @@ class Unifont:
             cx += blit(fb, ord(ch), cx, y, ink)
         return cx
 
-    def draw_char(self, fb, cp, x, y, ink=1):
-        if isinstance(cp, str):
-            cp = ord(cp)
-        return self._blit_glyph(fb, cp, x, y, ink)
-
     def draw_wrapped(self, fb, s, x, y, max_x, ink=1, line_gap=None):
         """带折行的整段绘制(按字符宽度换行, 不做禁则处理)。
         max_x 为右边界(x 坐标, 不含)。返回下一行的 y。"""

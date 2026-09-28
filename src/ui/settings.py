@@ -8,8 +8,8 @@
 #   full_every   每多少次局刷后做一次 OTP 全刷(清残影), 1~16, 默认 8
 #                在 16 之后再往上滚一格 = 0 = 「不全刷」: 软件不再自动全刷,
 #                改由阅读界面【短按】手动全刷一次。
-#   partial_rep  局刷波形的重复次数-1(越大字越黑实、越慢),   0~16, 默认 0
-#                (SSD1619 的 RP 是"重复次数-1", 0 也执行 1 遍; 0 ≈ 360ms)
+#   partial_rep  局刷波形的重复次数-1(越大字越黑实、越慢),   0~16, 默认 12
+#                (SSD1619 的 RP 是"重复次数-1", 0 也执行 1 遍)
 #
 # 用法:
 #   from ui import settings
@@ -20,7 +20,7 @@ import json
 from ui import canvas
 
 PATH = "/settings.json"
-DEFAULTS = {"full_every": 8, "partial_rep": 0}
+DEFAULTS = {"full_every": 8, "partial_rep": 12}
 
 NO_FULL = 0                                     # full_every 的特殊取值: 不全刷
 FULL_ORDER = tuple(range(1, 17)) + (NO_FULL,)   # 滚轮顺序: 1..16 → 不全刷
@@ -33,7 +33,7 @@ ITEMS = (
     ("full_every", "全刷间隔", 1, 16,
      "每 N 次局刷后全刷一次清残影；滚过 16 设为“不全刷”，改由阅读界面短按手动全刷。"),
     ("partial_rep", "局刷深度", 0, 16,
-     "局刷波形的重复次数-1：0=最快(相位跑一遍)，越大字越黑实、越慢。"),
+     "局刷波形的重复次数-1：0=最快但残影重，越大字越黑实、越慢。默认 12。"),
 )
 
 DESC = {k: d for k, _, _, _, d in ITEMS}

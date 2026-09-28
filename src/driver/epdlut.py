@@ -9,15 +9,14 @@
 #
 # 用法:
 #   from driver import epdlut
-#   lut = epdlut.load(epd, rep=0)      # 76 字节局刷 LUT; 失败返回 None
+#   lut = epdlut.load(epd, rep=12)     # 76 字节局刷 LUT; 失败返回 None
 #   canvas.show_lut(lut)               # 用这张 LUT 送显(见 ui/canvas.py)
 #
 # 参数是实测扫出来的(见 README「局刷参数调优」):
 #   KEEP_GROUP=4 (对应 vs=00 02 14 66 48) 画质最干净, gi>=5 后电压缺项会发脏;
-#   PHASES=(2,2,2,0) 总相位最短; RP=0(相位只跑一遍)。
-#   SSD1619 的 RP 是"重复次数-1": RP=0 也执行 1 遍。总时间约
-#       240ms(控制器固定开销) + 20.4ms × sum(TP) × (RP+1)
-#   本组 6 单位 -> 约 360ms。
+#   PHASES=(2,2,2,0) 总相位最短; RP 是"重复次数-1"(RP=0 也执行 1 遍)。
+#   RP=0 最快(~360ms)但残影重; 实测默认 12(~1.8s)在速度与残影间最平衡。
+#   总时间约: 240ms(控制器固定开销) + 20.4ms × sum(TP) × (RP+1)
 #
 # 注意: 全刷(0x22=0xF7)带 LOAD_LUT, 会把 OTP 波形重新灌进 0x32 覆盖这张自定义
 #       LUT, 所以每次局刷都必须重写 LUT(见 epd.display_lut)。
@@ -33,7 +32,7 @@ GROUP_BYTES = 5          # 每个波形组 = 4 个阶段时间 + 1 个 repeat
 GROUP_COUNT = 7
 KEEP_GROUP = 4           # 只保留这一组(gi=4, 对应 vs=00 02 14 66 48, 实测最干净)
 PHASES = (0x02, 0x02, 0x02, 0x00)   # 实测最短相位(总 6), 画质可接受
-DEFAULT_REP = 0          # 相位重复次数-1: 0 = 只跑一遍(最快, 约 360ms)
+DEFAULT_REP = 12         # 相位重复次数-1: 0 最快(~360ms)但残影重; 实测 12 最平衡
 
 
 def make_spi():

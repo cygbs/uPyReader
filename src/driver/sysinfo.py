@@ -13,7 +13,6 @@
 
 import sys
 import os
-import gc
 
 try:
     import machine
@@ -118,13 +117,6 @@ def psram_size():
         if r[0] > best:
             best = r[0]
     return best or None
-
-
-def heap_free():
-    try:
-        return gc.mem_free()
-    except Exception:
-        return 0
 
 
 # --------------------------------------------------------------------------- #
