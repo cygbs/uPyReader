@@ -70,9 +70,9 @@ ENC_LONG_MS = 800            # 长按判定(ms)
 #   MISO/DO(SO) 数据入      GPIO15    SD_MISO
 #   CS          片选        GPIO16    SD_CS
 #
-#   屏幕占 machine.SPI(1) = SPI2_HOST, TF 卡单独用 machine.SPI(2) = SPI3_HOST:
-#   两路硬件 SPI 主机互不干扰。不跟屏幕共用一组的另一个好处是屏幕是半双工
-#   (只有 SDI), 而 TF 卡需要真正的 MOSI+MISO。
+#   屏幕占 machine.SPI(1) = SPI2_HOST, TF 卡用 machine.SDCard(slot=SD_SPI_ID)
+#   = SPI3_HOST: 两路硬件 SPI 主机互不干扰。不跟屏幕共用一组的另一个好处是
+#   屏幕是半双工(只有 SDI), 而 TF 卡需要真正的 MOSI+MISO。
 #
 #   供电: 带 AMS1117/电平转换的模块要接 **5V** 才能稳定输出 3.3V(压差大);
 #         裸 3.3V 模块接 3V3。信号脚一律 3.3V。

@@ -5,10 +5,10 @@
 #       FatFs 会自动解析 MBR 分区表再挂载其中的 FAT 分区, 所以 PC 上普通
 #       "格式化为 FAT32" 的卡直接可用。
 #
-# 后端顺序:
-#   1) micropython-lib 的纯 Python 驱动 sdspi.py, 走 machine.SPI(2)=SPI3_HOST
-#      —— 不占用屏幕那路 SPI(1), 且每一步失败都会抛具体原因;
-#   2) 上面不行时, 再试固件内置的 machine.SDCard(SPI 模式)。
+# 后端: 直接用固件内置的 machine.SDCard(SPI 模式), slot=SD_SPI_ID(=2) 即
+#       SPI3_HOST —— 与屏幕那路 SPI(1)=SPI2_HOST 互不干扰, 且是 C 实现,
+#       比纯 Python 的 sdspi 更稳更快。数据阶段按 SD_FREQS 依次降频重试
+#       (卡初始化阶段固件自己用 100kHz, 与这里无关)。
 #
 # 挂载后 /sd 出现在根目录, 阅读器的 list_books() 会自动扫到 /sd/books/*.txt。
 #
@@ -17,12 +17,13 @@
 #   sdcard.mount()          # 挂到 /sd, 成功返回 True
 
 import os
-from machine import Pin, SPI
+import machine
+from machine import Pin
 from driver import hwconfig as cfg
 
 _MOUNT = cfg.SD_MOUNT
-_DEV = None            # 已挂载的块设备(保持引用)
-_BUS = None            # sdspi 用的 SPI(保持引用, 否则会被回收)
+_SLOT = cfg.SD_SPI_ID          # machine.SDCard 的 slot: 2 = SPI3_HOST
+_DEV = None                    # 已挂载的块设备(保持引用)
 _BACKEND = None
 _FREQ = None
 
@@ -55,100 +56,43 @@ def usage():
 
 
 def _clean():
-    global _DEV, _BUS, _BACKEND, _FREQ
+    global _DEV, _BACKEND, _FREQ
     if _BACKEND is not None:
         try:
             os.umount(_MOUNT)
         except Exception:
             pass
-    if _BUS is not None:
-        try:
-            _BUS.deinit()
-        except Exception:
-            pass
-    _DEV = _BUS = _BACKEND = _FREQ = None
+    _DEV = _BACKEND = _FREQ = None
 
 
-# --------------------------------------------------------------------------- #
-# 后端 1: 纯 Python sdspi (machine.SPI(2) = SPI3_HOST)
-# --------------------------------------------------------------------------- #
-def _try_sdspi():
-    from driver import sdspi
-    for baud in cfg.SD_FREQS:
-        bus = None
-        try:
-            bus = SPI(cfg.SD_SPI_ID, baudrate=baud, polarity=0, phase=0,
-                      sck=Pin(cfg.SD_SCK), mosi=Pin(cfg.SD_MOSI),
-                      miso=Pin(cfg.SD_MISO))
-            cs = Pin(cfg.SD_CS, Pin.OUT, value=1)
-            dev = sdspi.SDCard(bus, cs, baudrate=baud)
-            return dev, bus, baud
-        except Exception as e:
-            print("[sd] sdspi @%dHz: %s" % (baud, e))
-            if bus is not None:
-                try:
-                    bus.deinit()
-                except Exception:
-                    pass
-    return None, None, None
-
-
-# --------------------------------------------------------------------------- #
-# 后端 2: 固件内置 machine.SDCard (SPI 模式)
-# --------------------------------------------------------------------------- #
-def _try_builtin():
-    import machine
-    if not hasattr(machine, "SDCard"):
-        return None
-    kw = dict(sck=Pin(cfg.SD_SCK), mosi=Pin(cfg.SD_MOSI),
-              miso=Pin(cfg.SD_MISO), cs=Pin(cfg.SD_CS),
-              freq=cfg.SD_FREQS[0])
-    for slot in (2, 1, None):
-        args = dict(kw)
-        if slot is not None:
-            args["slot"] = slot
-        try:
-            return machine.SDCard(**args)
-        except Exception:
-            pass
-    return None
-
-
-# --------------------------------------------------------------------------- #
-# 挂载
-# --------------------------------------------------------------------------- #
 def mount(force=False):
     """挂载 TF 卡到 /sd。已挂载且 force=False 时直接返回 True。"""
-    global _DEV, _BUS, _BACKEND, _FREQ
+    global _DEV, _BACKEND, _FREQ
     if not force and _BACKEND is not None:
         return True
     _clean()
 
-    # ---- 1) sdspi ----
-    dev, bus, baud = _try_sdspi()
-    if dev is not None:
+    if not hasattr(machine, "SDCard"):
+        print("[sd] 固件未编译 machine.SDCard")
+        return False
+
+    for freq in cfg.SD_FREQS:
         try:
+            dev = machine.SDCard(
+                sck=Pin(cfg.SD_SCK), mosi=Pin(cfg.SD_MOSI),
+                miso=Pin(cfg.SD_MISO), cs=Pin(cfg.SD_CS),
+                freq=freq, slot=_SLOT)
             os.mount(dev, _MOUNT)
-            _DEV, _BUS, _BACKEND, _FREQ = dev, bus, "sdspi", baud
-            print("[sd] 挂载 %s @%dHz (sdspi)" % (_MOUNT, baud))
+            _DEV, _BACKEND, _FREQ = dev, "machine.SDCard", freq
+            print("[sd] 挂载 %s @%dHz (machine.SDCard slot=%d)"
+                  % (_MOUNT, freq, _SLOT))
             return True
         except Exception as e:
-            print("[sd] os.mount(sdspi): %s" % e)
+            print("[sd] machine.SDCard @%dHz: %s" % (freq, e))
             try:
-                bus.deinit()
+                os.umount(_MOUNT)
             except Exception:
                 pass
-
-    # ---- 2) 内置 machine.SDCard ----
-    dev = _try_builtin()
-    if dev is not None:
-        try:
-            os.mount(dev, _MOUNT)
-            _DEV, _BACKEND, _FREQ = dev, "machine.SDCard", cfg.SD_FREQS[0]
-            print("[sd] 挂载 %s (machine.SDCard)" % _MOUNT)
-            return True
-        except Exception as e:
-            print("[sd] os.mount(machine.SDCard): %s" % e)
 
     print("[sd] 未检测到 TF 卡")
     return False
