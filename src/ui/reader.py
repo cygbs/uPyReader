@@ -15,7 +15,7 @@
 #   from ui import reader
 #   books = reader.list_books()              # [(相对路径, 字节大小), ...]
 #   b = reader.Book(books[0][0], canvas)     # 打开(自动定位到上次位置)
-#   b.next_page(); reader.draw(canvas, b)    # 翻页 + 渲染
+#   b.next_page(); reader.draw(canvas, b, "20:46")   # 翻页 + 渲染(可带时钟文字)
 
 import os
 import json
@@ -325,11 +325,22 @@ class Book:
 # --------------------------------------------------------------------------- #
 # 阅读界面绘制
 # --------------------------------------------------------------------------- #
-def draw(c, book):
+def draw(c, book, clock_text=""):
+    """渲染当前页。clock_text 非空时接在标题栏右侧的「第X页 Y%」后面。
+
+    只在本函数被调用时取显示值, 所以时间只在【翻页/打开/重画】时更新 ——
+    由调用方(main.py)从 DS3231 读好传进来, reader 本身不碰 I2C, 也不做 NTP。
+    """
     c.fb.fill(0)
     lh = book.line_height
-    title = book.name.rsplit("/", 1)[-1]
     right = "第%d页 %d%%" % (book.page_no(), book.progress())
+    if clock_text:
+        right += "  " + clock_text
+    title = book.name.rsplit("/", 1)[-1]
+    # 书名过长时截断, 给右边的页码/时间腾位置(字库没有裁剪功能, 否则会叠字)
+    avail = c.width - 16 - c.font.text_width(right) - 10
+    while title and c.font.text_width(title) > avail:
+        title = title[:-1]
     canvas.title_bar(c, title, right)
 
     y = book.body_top

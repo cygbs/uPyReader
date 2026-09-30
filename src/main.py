@@ -93,15 +93,23 @@ def hint_files():
         return ""
 
 
-def hint_clock():
-    """主界面「时钟模式」右侧: 当前 HH:MM(没接模块显示 --:--)。"""
+def clock_hhmm(fallback=""):
+    """从 DS3231 取当前时间的 HH:MM(24 小时制)。不做 NTP。
+
+    没接模块或读失败时返回 fallback。这是阅读界面标题栏用的时间来源。
+    """
     if RTC is None:
-        return "--:--"
+        return fallback
     try:
         dt = RTC.datetime()
         return "%02d:%02d" % (dt[4], dt[5])
     except Exception:
-        return "--:--"
+        return fallback
+
+
+def hint_clock():
+    """主界面「时钟模式」右侧: 当前 HH:MM(没接模块显示 --:--)。"""
+    return clock_hhmm("--:--")
 
 
 def hint_chip():
@@ -291,7 +299,7 @@ def open_book(c, name):
         print("打开失败:", name, e)
         show_toast(c, "打开失败", str(e)[:20])
         return None
-    reader.draw(c, book)
+    reader.draw(c, book, clock_hhmm())
     c.show()
     print("打开 %s 第 %d 页 (%d%%)" % (name, book.page_no(), book.progress()))
     return book
@@ -574,7 +582,7 @@ def main():
                         if turned:
                             prev = page_turns
                             page_turns += turned
-                            reader.draw(c, book)
+                            reader.draw(c, book, clock_hhmm())
                             refresh_screen(c, page_turns, prev)
 
                     # ---- 按键: 长按总是保存并退出; 短按在「不全刷」模式下
@@ -588,7 +596,9 @@ def main():
                         c.show()
                     elif ev & CLICK:
                         if FULL_EVERY == settings.NO_FULL:
-                            c.show()            # 手动全刷一次, 不退出
+                            # 手动全刷: 重画一遗顺带刷新标题栏的时间, 不退出
+                            reader.draw(c, book, clock_hhmm())
+                            c.show()
                         else:
                             book.save()
                             book = None
