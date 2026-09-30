@@ -102,7 +102,7 @@ def hint_fw():
 
 
 def hint_net():
-    return "开" if network.is_on() else "关"
+    return network.status_hint()
 
 
 def hint_plugins():
@@ -328,6 +328,9 @@ def main():
              PARTIAL_REP, LINE_GAP))
     print("局刷 LUT: %s" % ("就绪" if PARTIAL_LUT else "不可用, 将使用全刷"))
 
+    # 已保存过 Wi-Fi 就开机自动连接(非阻塞, 状态由主循环轮询)
+    network.start_autoconnect()
+
     hints = build_hints()
     index = 0
     screen = "menu"
@@ -343,6 +346,8 @@ def main():
     set_moves = 0
     net_index = 0
     net_moves = 0
+    pass_moves = 0
+    last_poll = time.ticks_ms()
     toast_until = 0
 
     draw_main(c, index, hints)
@@ -517,7 +522,7 @@ def main():
                         network.draw(c, net_index)
                         refresh_screen(c, net_moves, prev)
 
-                    # ---- 按下: WLAN 行切换开关并扫描; 热点行暂不支持连接 ----
+                    # ---- 按下: WLAN 行切换开关并扫描; 热点行进入密码页 ----
                     if ev & CLICK:
                         if net_index == 0:
                             if not network.is_on():
@@ -528,11 +533,55 @@ def main():
                             net_moves += 1
                             network.draw(c, net_index)
                             show_partial(c)
+                        else:
+                            network.begin_pass(network.ap_ssid(net_index - 1))
+                            network.pass_draw(c)
+                            pass_moves = 0
+                            c.show()
+                            screen = "wifi_pass"
                     elif ev & LONG:
                         screen = "menu"
                         hints = build_hints()
                         draw_main(c, index, hints)
                         c.show()
+
+                elif screen == "wifi_pass":
+                    # ---- 旋转: 选择 莫尔斯框/退格/取消/连接 ----
+                    changed = network.pass_tick()
+                    if d:
+                        prev = pass_moves
+                        pass_moves += 1
+                        network.pass_rotate(d)
+                        network.pass_draw(c)
+                        refresh_screen(c, pass_moves, prev)
+                    elif changed:
+                        # 停手足够久, 莫尔斯结算成一个字符
+                        network.pass_draw(c)
+                        show_partial(c)
+
+                    # ---- 按下/长按: 莫尔斯 ·/–, 或回车/退格/取消/连接 ----
+                    if ev & (CLICK | LONG):
+                        act = network.pass_press(bool(ev & LONG))
+                        if act == "cancel":
+                            screen = "network"
+                            net_index = 0
+                            network.draw(c, net_index)
+                            c.show()
+                        elif act == "connect":
+                            network.draw_connecting(c, network.pass_ssid())
+                            show_partial(c)
+                            if network.pass_connect():
+                                print("Wi-Fi 已连接:", network.pass_ssid())
+                                screen = "network"
+                                net_index = 0
+                                network.draw(c, net_index)
+                                c.show()
+                            else:
+                                network.pass_draw(c)
+                                show_partial(c)
+                        else:
+                            network.pass_draw(c)
+                            show_partial(c)
 
                 else:
                     # ---- 关于本机: 按一下或长按都返回主界面 ----
@@ -542,6 +591,14 @@ def main():
                         hints = build_hints()        # 插件数量可能刚变化
                         draw_main(c, index, hints)
                         c.show()
+
+                # 自动连接状态轮询(约 1s 一次); 有变化且在主界面就刷新提示
+                if time.ticks_diff(time.ticks_ms(), last_poll) >= 1000:
+                    last_poll = time.ticks_ms()
+                    if network.poll() and screen == "menu":
+                        hints = build_hints()
+                        draw_main(c, index, hints)
+                        show_partial(c)
             except Exception as e:
                 # 任何未预期异常(例如 TF 卡偶发 EIO)都不打死界面:
                 # 打印后回主界面, 编码器继续可用。
