@@ -12,10 +12,12 @@ FOOTER = "按下或长按返回"
 def _sd_value():
     if not sdcard.is_mounted():
         return "未挂载"
+    mode = sdcard.backend() or "?"
     u = sdcard.usage()
     if not u:
-        return "已挂载"
-    return "%s (可用 %s)" % (sysinfo.fmt_size(u[0]), sysinfo.fmt_size(u[1]))
+        return mode
+    return "%s · %s (可用 %s)" % (mode, sysinfo.fmt_size(u[0]),
+                                   sysinfo.fmt_size(u[1]))
 
 
 def _temp_value(c):

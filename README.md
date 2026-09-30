@@ -12,8 +12,7 @@ uPyReader/
 │   │   ├── epdlut.py           # 从面板 OTP 读波形并裁成不闪的局刷 LUT
 │   │   ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
 │   │   ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
-│   │   ├── sdspi.py            # 纯 Python SPI TF 卡驱动（micropython-lib）
-│   │   └── sdcard.py           # 挂载 TF 卡到 /sd
+│   │   └── sdcard.py           # 挂载 TF 卡到 /sd（原生 SDMMC）
 │   └── ui/                     # 绘制层：画布 + 页面
 │       ├── canvas.py           # 画布 + 文本对齐 + 列表菜单 + 信息页
 │       ├── unifont.py          # UFB1 位图字库读取 + 渲染
@@ -40,7 +39,6 @@ uPyReader/
 │   ├── epdlut.py
 │   ├── rotary.py
 │   ├── sysinfo.py
-│   ├── sdspi.py
 │   └── sdcard.py
 ├── ui/                       # 绘制层（Python 包）
 │   ├── canvas.py
@@ -231,7 +229,7 @@ mpremote connect $PORT exec "import main; main.main()"
 │ 主频    240 MHz                     │
 │ Flash   16 MB                       │
 │ PSRAM   8 MB                        │
-│ TF 卡   939 MB (可用 931 MB)        │
+│ TF 卡   SDMMC 4-bit · 939 MB        │
 │ MAC     7C:DF:A1:12:34:56           │
 ├─────────────────────────────────────┤
 │ 按下或长按返回                       │
@@ -271,29 +269,36 @@ mpremote connect $PORT exec "import main; main.main()"
 
 ### 用 TF 卡放书（microSD，可选）
 
-除了设备内部 Flash，也可以把书放 TF 卡（SPI 模式，**FAT32 + MBR 分区表**）。
+除了设备内部 Flash，也可以把书放 TF 卡（**FAT32 + MBR 分区表**）。
 卡上的书会被「浏览文件」自动列出来，路径形如 `/sd/books/xxx.txt`。
 
-引脚（见 `driver/hwconfig.py`；屏幕占 `SPI(1)`，TF 卡单独用 `SPI(2)`）：
+驱动用 ESP32-S3 **原生 SDMMC**（`machine.SDCard(slot=1)`，经 GPIO matrix 任意
+布线）：先 4-bit，失败自动降 1-bit（只用 DAT0）。引脚见 `driver/hwconfig.py`：
 
 | 模块丝印 | 含义 | GPIO | `hwconfig` |
 |---|---|---|---|
-| SCK/CLK | 时钟 | 13 | `SD_SCK` |
-| MOSI/DI(SI) | 数据出 | 17 | `SD_MOSI` |
-| MISO/DO(SO) | 数据入 | 15 | `SD_MISO` |
-| CS | 片选 | 16 | `SD_CS` |
+| CLK | 时钟 | 13 | `SD_CLK` |
+| CMD | 命令 | 14 | `SD_CMD` |
+| DAT0 | 数据 0 | 15 | `SD_D0` |
+| DAT1 | 数据 1 | 16 | `SD_D1` |
+| DAT2 | 数据 2 | 17 | `SD_D2` |
+| DAT3 | 数据 3 | 18 | `SD_D3` |
+| SD-CD | 卡检测（可选） | 21 | `SD_CD` |
 
 > ⚠️ 带 AMS1117/电平转换的模块 **VCC 接 5V** 才能稳住 3.3V（压差大）；
 > 裸 3.3V 模块接 3V3。信号脚一律 3.3V。
 
-> 注：ESP32-S3 的 `SPI(1)=SPI2_HOST` 默认 **MISO 是 GPIO13**，而 GPIO13 这里是
-> TF 卡的 SCK。墨水屏只用 SDI(MOSI)、不用 MISO，所以 `epdlut.make_spi()` 里显式传
-> `miso=None`，让 SPI 主机不占任何 MISO 脚；否则每次创建/重建 `SPI(1)`（如读 OTP
-> 波形后）都会把 GPIO13 抢去当 MISO，TF 卡就没时钟了（读子目录报 `EIO`）。
+> 注：屏幕走 `SPI(1)=SPI2_HOST`，SDMMC 不使用 SPI 主机，两者互不干扰。
+> 正因如此，`epdlut.make_spi()` 仍显式传 `miso=None`：ESP32-S3 的 `SPI(1)` 默认
+> MISO 是 GPIO13，而 GPIO13 现在是 SDMMC 的 CLK，不能让墨水屏那路 SPI 抢走。
 
-启动时自动挂到 `/sd`，日志会打印 `TF 卡: 已挂载 …`；没插卡也不影响使用。
-驱动优先用 micropython-lib 的纯 Python `sdspi.py`（走 `SPI(2)`，不占用屏幕那路
-SPI，且每一步失败都会抛出具体原因）；不行时再回退到固件内置的 `machine.SDCard`。
+> 📉 **关于速度**：本板 N16R8 的 8MB Octal-PSRAM 与 SDMMC 的 DMA 存在带宽争用，
+> MicroPython 的堆又在 PSRAM 上，因此顺序读实测只有约 **0.9 MB/s**（与
+> [esp-idf#11628](https://github.com/espressif/esp-idf/issues/11628) 的现象一致，
+> 并非卡或模块的问题）。阅读器每页只读 4KB，实测约 **7 ms**，完全够用。
+> 想提速需要重编固件（把 SD 缓冲区放进内部 RAM / 调大 `FATFS_VFS_FSTAT_BLKSIZE`）。
+
+启动时自动挂到 `/sd`，日志会打印 `TF 卡: 已挂载 … (SDMMC 4-bit)`；没插卡也不影响使用。
 阅读进度仍存在**设备内部**的 `/books/.state/progress.json`，所以拔卡/换卡进度不丢。
 
 ### 阅读小说（浏览文件 / 继续阅读）
@@ -490,8 +495,8 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
   再 `tools/upload.sh`，设备上应存在 `/fonts/unifont16.bin`。
 
 **TF 卡读不到 / 挂载失败**
-- 最常见的是 **MOSI/MISO 接反**（模块常标 `DI`/`DO` 或 `SI`/`SO`），或者某根
-  杜邦线/焊点**接触不良** —— 卡会完全无应答（读回全 `0xFF`）。
+- 最常见的是 **CLK/CMD/DAT0 接错**（模块常标 `CLK` / `CMD` / `DAT0..DAT3`），或某根
+  杜邦线/焊点**接触不良** —— 卡会完全无应答。
 - 带 AMS1117/电平转换的模块 **VCC 接 5V**；只有电阻的 3.3V 模块接 3V3。
 - 卡可能锁在 SD 模式：整板断电一次再上电。
 - 卡要是 **FAT32 + MBR**（PC 上“格式化为 FAT32”即可），启动日志会有
@@ -502,7 +507,55 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 
 ---
 
-## 6. 后续做更强的阅读器
+## 6. 已知问题
+
+### 6.1 SDMMC 顺序读写只有 ~0.9 MB/s（PSRAM ↔ SDMMC DMA 争用）
+
+**现象**：TF 卡挂载、读取都正确，但连续大块读只有约 0.9 MB/s（写更慢），
+而同一张卡用读卡器在 PC 上有 3~4 MB/s。
+
+**不是卡、也不是模块的问题**。我对裸转接模块做过对照：开/关内部上拉、
+20/40 MHz 几乎没差别，说明既不是信号完整性也不是时钟，而是 ESP32-S3 上
+**SDMMC 的 DMA 缓冲区落在了 PSRAM 里**：
+
+- 本板 N16R8 有 8 MB **Octal-PSRAM**；MicroPython 的 Python 堆整体在 PSRAM 上
+  （`gc.mem_free ≈ 8.3 MB`），所以 FatFs 缓存和 `readblocks()` 用的 buffer 都在 PSRAM。
+- SDMMC 的 DMA 访问 PSRAM 要经过 cache/PSRAM 控制器，并和 CPU 抢带宽，
+  平均每个 512 B 扇区多花约 0.6 ms。
+- 这是 ESP-IDF 的已知现象，见
+  [esp-idf#11628](https://github.com/espressif/esp-idf/issues/11628)
+  （该 issue 的结论是“把 SD 缓冲区放进内部 RAM”，而不是关掉 PSRAM）。
+- 另一个叠加因素是固件的 FatFs 块大小默认 512（见
+  [arduino-esp32#10785](https://github.com/espressif/arduino-esp32/issues/10785)），
+  这是编译期选项，运行时改不了。
+
+**影响**：对阅读器几乎为零 —— 每页只从卡里读 4 KB，实测约 **7 ms**。
+只有整本顺序拷贝/备份大文件时才明显。**PSRAM 与 TF 速度不是二选一**：
+只要把 SD 的几 KB 传输缓冲放进**内部 SRAM**，PSRAM 照用、SD 也能跑满；
+当前慢只是因为固件没做这件事。
+
+**想真正提速（需要重编固件，改 Python 文件没用）**：
+1. 编译时设 `CONFIG_FATFS_VFS_FSTAT_BLKSIZE=4096`（文件 I/O 约提速 4~6 倍）；
+2. 改 `ports/esp32/machine_sdcard.c`，让 `readblocks/writeblocks` 用
+   `heap_caps_malloc(..., MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)` 的临时缓冲做 bounce；
+3. 或用自定义块设备自行调用 `esp_vfs_fat_sdmmc_mount`，把缓冲显式放内部 RAM。
+
+### 6.2 `SD-CD` 卡检测在本模块上不可用
+
+有些 TF 转接模块的 `SD-CD` 是卡座里的机械开关。本项目的裸转接模块该脚**悬空**：
+实测 `PULL_UP` 读 1、`PULL_DOWN` 读 0，说明它没接地，无法判断有无卡。
+因此代码不依赖卡检测（`hwconfig.SD_CD` 仅作记录），挂载失败就当成“未插卡”，
+不影响使用。热插拔后想重新挂载，手动调 `sdcard.mount(force=True)` 即可。
+
+### 6.3 为什么砍掉了 SPI 模式挂载
+
+早期版本用 SPI（`machine.SDCard(slot=2)` + 一组 SPI 引脚）。它要额外一组引脚、
+受 `SPI(1)` 默认 MISO=GPIO13 的干扰，而且比 SDMMC 更慢；现在统一走原生 SDMMC
+（4-bit 失败自动降 1-bit），见 `driver/sdcard.py`。
+
+---
+
+## 7. 后续做更强的阅读器
 
 现在已经能浏览 /books 下的 `.txt`、逐页阅读并记忆进度。还可以继续加：
 
