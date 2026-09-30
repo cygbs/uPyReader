@@ -54,7 +54,7 @@ from driver.hwconfig import (
     ENC_A, ENC_B, ENC_KEY, ENC_STEPS_PER_DETENT, ENC_LONG_MS,
 )
 from driver.epd_ssd1619 import EPD_SSD1619
-from driver.rotary import Rotary, CLICK, LONG
+from driver.rotary import Rotary, CLICK, LONG, PRESS, RELEASE
 from driver import epdlut, sdcard, sysinfo
 from ui.unifont import Unifont
 from ui import about, canvas, network, reader, settings
@@ -347,6 +347,7 @@ def main():
     net_index = 0
     net_moves = 0
     pass_moves = 0
+    pass_t0 = 0
     last_poll = time.ticks_ms()
     toast_until = 0
 
@@ -537,6 +538,7 @@ def main():
                             network.begin_pass(network.ap_ssid(net_index - 1))
                             network.pass_draw(c)
                             pass_moves = 0
+                            pass_t0 = time.ticks_ms()
                             c.show()
                             screen = "wifi_pass"
                     elif ev & LONG:
@@ -559,9 +561,12 @@ def main():
                         network.pass_draw(c)
                         show_partial(c)
 
-                    # ---- 按下/长按: 莫尔斯 ·/–, 或回车/退格/取消/连接 ----
-                    if ev & (CLICK | LONG):
-                        act = network.pass_press(bool(ev & LONG))
+                    # ---- 按键自己计时: 短按=· 长按=– (不用驱动的 LONG) ----
+                    if ev & PRESS:
+                        pass_t0 = time.ticks_ms()
+                    if ev & RELEASE:
+                        dur = time.ticks_diff(time.ticks_ms(), pass_t0)
+                        act = network.pass_press(network.press_is_long(dur))
                         if act == "cancel":
                             screen = "network"
                             net_index = 0
