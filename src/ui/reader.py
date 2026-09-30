@@ -19,7 +19,7 @@
 
 import os
 import json
-from ui import canvas
+from ui import canvas, settings
 
 BOOKS_DIR = "/books"
 STATE_DIR = "/books/.state"
@@ -258,10 +258,15 @@ class Book:
         self.name = name
         self.path = "/" + name
         self.font = canvas.font
-        lh = self.font.line_height
+        # 行距 = 字库自带行高 + 用户在「固件设置」里设的额外间距(像素)
+        # (line_gap 缺省/读盘失败时回落到 settings.DEFAULTS)
+        self.line_gap = settings.load().get(
+            "line_gap", settings.DEFAULTS["line_gap"])
+        self.line_height = self.font.line_height + self.line_gap
+        lh = self.line_height
         self.body_top = lh + 8
         self.max_x = canvas.width - 24            # 左右各 12px 边距
-        self.rows = (canvas.height - 14 - self.body_top) // lh
+        self.rows = max(1, (canvas.height - 14 - self.body_top) // lh)
 
         try:
             self.size = os.stat(self.path)[6]
@@ -322,7 +327,7 @@ class Book:
 # --------------------------------------------------------------------------- #
 def draw(c, book):
     c.fb.fill(0)
-    lh = c.font.line_height
+    lh = book.line_height
     title = book.name.rsplit("/", 1)[-1]
     right = "第%d页 %d%%" % (book.page_no(), book.progress())
     canvas.title_bar(c, title, right)

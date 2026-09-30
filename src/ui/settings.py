@@ -2,14 +2,16 @@
 # settings.py — 固件设置页面 + 配置持久化
 #
 # 设置保存在设备根目录 /settings.json, 例如:
-#   {"full_every": 8, "partial_rep": 8}
+#   {"full_every": 8, "partial_rep": 8, "line_gap": 0}
 #
-# 两项设置:
+# 三项设置:
 #   full_every   每多少次局刷后做一次 OTP 全刷(清残影), 1~16, 默认 8
 #                在 16 之后再往上滚一格 = 0 = 「不全刷」: 软件不再自动全刷,
 #                改由阅读界面【短按】手动全刷一次。
 #   partial_rep  局刷波形的重复次数-1(越大字越黑实、越慢),   0~16, 默认 12
 #                (SSD1619 的 RP 是"重复次数-1", 0 也执行 1 遍)
+#   line_gap     阅读界面书籍文字每行之间的额外间距(像素),      0~20, 默认 0
+#                0 = 字库自带行距(最紧凑); 越大行距越宽, 一屏显示的行数越少。
 #
 # 用法:
 #   from ui import settings
@@ -20,7 +22,7 @@ import json
 from ui import canvas
 
 PATH = "/settings.json"
-DEFAULTS = {"full_every": 8, "partial_rep": 12}
+DEFAULTS = {"full_every": 8, "partial_rep": 12, "line_gap": 0}
 
 NO_FULL = 0                                     # full_every 的特殊取值: 不全刷
 FULL_ORDER = tuple(range(1, 17)) + (NO_FULL,)   # 滚轮顺序: 1..16 → 不全刷
@@ -34,6 +36,8 @@ ITEMS = (
      "每 N 次局刷后全刷一次清残影；滚过 16 设为“不全刷”，改由阅读界面短按手动全刷。"),
     ("partial_rep", "局刷深度", 0, 16,
      "局刷波形的重复次数-1：0=最快但残影重，越大字越黑实、越慢。默认 12。"),
+    ("line_gap", "字符间距", 0, 20,
+     "阅读界面书籍文字每行之间的额外间距（像素）：0=最紧凑，越大行距越宽、每屏行数越少。"),
 )
 
 DESC = {k: d for k, _, _, _, d in ITEMS}
@@ -124,6 +128,8 @@ def draw(c, cfg, index, editing=False):
     y = c.font.draw_wrapped(c.fb, DESC[key], 12, y, c.width - 24)
     if key == "full_every":
         ran = "范围 1 ~ 16，再往上滚 = 不全刷"
+    elif key == "line_gap":
+        ran = "范围 0 ~ 20 像素"
     else:
         ran = "范围 %d ~ %d" % (lo, hi)
     c.font.draw(c.fb, ran, 12, y + 4)

@@ -67,6 +67,7 @@ FILE_ROWS = 5            # 文件列表一屏显示行数
 FULL_EVERY = 8           # 每移动/翻页多少次插一次全刷(其余用不闪的局刷 LUT)
                          # 0 = 不全刷: 软件不自动全刷, 阅读界面短按手动全刷
 PARTIAL_REP = 12         # 局刷波形的 repeat-1(越大字越"实", 越慢)
+LINE_GAP = 0             # 阅读界面每行之间的额外间距(像素), 由 apply_settings() 更新
 TOAST_MS = 1500          # 按下后的提示停留时间
 FOOT_HINT = "旋转选择   按下确认"
 FILE_HINT = "旋转选择   按下阅读   长按返回"
@@ -95,9 +96,9 @@ def hint_chip():
 
 
 def hint_fw():
-    if FULL_EVERY == settings.NO_FULL:
-        return "不全刷 / 深度 %d" % PARTIAL_REP
-    return "全刷 %d / 深度 %d" % (FULL_EVERY, PARTIAL_REP)
+    # 紧凑格式: 全刷-局刷深度-字符间距, 例如 N-16-2 (N = 不全刷)
+    fe = "N" if FULL_EVERY == settings.NO_FULL else str(FULL_EVERY)
+    return "%s-%d-%d" % (fe, PARTIAL_REP, LINE_GAP)
 
 
 def hint_plugins():
@@ -204,10 +205,11 @@ def refresh_screen(c, count, prev):
 
 
 def apply_settings(cfg):
-    """把设置应用到运行期: 更新 FULL_EVERY, 并按新的局刷深度重裁 LUT。"""
-    global FULL_EVERY, PARTIAL_REP, PARTIAL_LUT
+    """把设置应用到运行期: 更新 FULL_EVERY/LINE_GAP, 并按新的局刷深度重裁 LUT。"""
+    global FULL_EVERY, PARTIAL_REP, LINE_GAP, PARTIAL_LUT
     FULL_EVERY = cfg["full_every"]
     PARTIAL_REP = cfg["partial_rep"]
+    LINE_GAP = cfg["line_gap"]
     if PARTIAL_OTP is not None:
         PARTIAL_LUT = epdlut.make_partial_lut(PARTIAL_OTP, PARTIAL_REP)
     return cfg
@@ -310,9 +312,9 @@ def main():
     PARTIAL_OTP = epdlut.read_otp_lut(epd)
     if PARTIAL_OTP is not None:
         PARTIAL_LUT = epdlut.make_partial_lut(PARTIAL_OTP, PARTIAL_REP)
-    print("设置: 全刷间隔=%s, 局刷深度=%d"
+    print("设置: 全刷间隔=%s, 局刷深度=%d, 字符间距=%dpx"
           % ("不全刷" if FULL_EVERY == settings.NO_FULL else FULL_EVERY,
-             PARTIAL_REP))
+             PARTIAL_REP, LINE_GAP))
     print("局刷 LUT: %s" % ("就绪" if PARTIAL_LUT else "不可用, 将使用全刷"))
 
     hints = build_hints()
