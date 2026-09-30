@@ -143,6 +143,51 @@ class Unifont:
             cx += blit(fb, ord(ch), cx, y, ink)
         return cx
 
+    def draw_scaled(self, fb, s, x, y, scale=2, ink=1):
+        """把一行字按整数倍放大绘制(每个字库像素画成 scale×scale 方块)。
+
+        时钟的 HH:MM 需要远远大于 16px, 而字库是固定 16×16 点阵, 所以直接
+        把每个墨点铺成方块(无插值, 硬边方块, 正合墨水屏观感)。
+        用游程合并相邻墨点, 一次 fill_rect 画一段, 比逐点少很多调用。
+        返回结束后的 x 坐标。
+        """
+        if scale < 1:
+            scale = 1
+        cell_h = self.cell_h
+        cell_w = CELL_W
+        invert = 1 if self.font_ink != ink else 0
+        want = ink ^ invert            # 位图中等于该值的像素要涂成 ink
+        cx = x
+        for ch in s:
+            cp = ord(ch)
+            off, adv = self.lookup(cp)
+            if off is None:
+                raw = self._miss_full if adv == self.full_adv else self._miss_half
+            else:
+                raw = self._mv[off:off + GLYPH_BYTES]
+            for gy in range(cell_h):
+                row = (raw[gy * 2] << 8) | raw[gy * 2 + 1]
+                if row == 0 or row == 0xFFFF:
+                    continue
+                yy = y + gy * scale
+                gx = 0
+                while gx < cell_w:
+                    if ((row >> (15 - gx)) & 1) == want:
+                        run = 1
+                        while (gx + run < cell_w and
+                               ((row >> (15 - gx - run)) & 1) == want):
+                            run += 1
+                        fb.fill_rect(cx + gx * scale, yy, run * scale, scale, ink)
+                        gx += run
+                    else:
+                        gx += 1
+            cx += adv * scale
+        return cx
+
+    def scaled_width(self, s, scale=1):
+        """放大后的字符串像素宽度(用于居中)。"""
+        return self.text_width(s) * max(1, scale)
+
     def draw_wrapped(self, fb, s, x, y, max_x, ink=1, line_gap=None):
         """带折行的整段绘制(按字符宽度换行, 不做禁则处理)。
         max_x 为右边界(x 坐标, 不含)。返回下一行的 y。"""

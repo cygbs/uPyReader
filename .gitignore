@@ -16,5 +16,8 @@ Thumbs.db
 *.txt
 books/
 
+# 设备状态备份(settings.json / wifi.json / 阅读进度; 由 upload.sh 同步到设备)
+state/
+
 # build_font.py 下载的 Unifont 源缓存
 tools/.cache/

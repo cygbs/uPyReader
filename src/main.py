@@ -55,9 +55,9 @@ from driver.hwconfig import (
 )
 from driver.epd_ssd1619 import EPD_SSD1619
 from driver.rotary import Rotary, CLICK, LONG, PRESS, RELEASE
-from driver import epdlut, sdcard, sysinfo
+from driver import ds3231, epdlut, sdcard, sysinfo
 from ui.unifont import Unifont
-from ui import about, canvas, network, reader, settings
+from ui import about, canvas, clock, network, reader, settings
 
 
 LIST_TOP = 26            # 列表起始 y
@@ -74,6 +74,8 @@ FILE_HINT = "旋转选择   按下阅读   长按返回"
 
 PARTIAL_OTP = None       # 面板 OTP 里的原始波形(改局刷深度时用它重新裁)
 PARTIAL_LUT = None       # 运行期由 main() 填入(epdlut 裁出的局刷波形)
+RTC = None               # driver.ds3231.DS3231 实例; 没接模块时为 None
+CLOCK_MSG = ""           # 时钟页底部状态提示(对时结果/掉电警告), 进入时清空
 
 
 # --------------------------------------------------------------------------- #
@@ -89,6 +91,17 @@ def hint_files():
         return "%d 本" % len(reader.list_books())
     except Exception:
         return ""
+
+
+def hint_clock():
+    """主界面「时钟模式」右侧: 当前 HH:MM(没接模块显示 --:--)。"""
+    if RTC is None:
+        return "--:--"
+    try:
+        dt = RTC.datetime()
+        return "%02d:%02d" % (dt[4], dt[5])
+    except Exception:
+        return "--:--"
 
 
 def hint_chip():
@@ -112,6 +125,7 @@ def hint_plugins():
 MENU = (
     ("继续阅读", hint_reading),
     ("浏览文件", hint_files),
+    ("时钟模式", hint_clock),
     ("关于本机", hint_chip),
     ("固件设置", hint_fw),
     ("网络", hint_net),
@@ -119,10 +133,11 @@ MENU = (
 )
 IDX_CONTINUE = 0
 IDX_FILES = 1
-IDX_ABOUT = 2
-IDX_SETTINGS = 3
-IDX_NETWORK = 4
-IDX_PLUGINS = 5
+IDX_CLOCK = 2
+IDX_ABOUT = 3
+IDX_SETTINGS = 4
+IDX_NETWORK = 5
+IDX_PLUGINS = 6
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +312,96 @@ def open_continue(c):
 
 
 # --------------------------------------------------------------------------- #
+# 时钟模式(DS3231)
+# --------------------------------------------------------------------------- #
+def setup_rtc():
+    """初始化 DS3231。没接或故障时全局 RTC 保持 None, 界面优雅降级。"""
+    global RTC
+    try:
+        rtc = ds3231.DS3231()
+    except Exception as e:
+        print("DS3231 初始化失败:", e)
+        RTC = None
+        return None
+    if not rtc.present():
+        print("DS3231: 未检测到(检查 SDA=47 / SCL=21 / VCC=3V3)")
+        rtc.deinit()
+        RTC = None
+        return None
+    RTC = rtc
+    try:
+        dt = RTC.datetime()
+        print("DS3231: %04d-%02d-%02d %s %02d:%02d:%02d  %.2f\u00b0C%s"
+              % (dt[0], dt[1], dt[2], clock.week_cn(dt[3]), dt[4], dt[5], dt[6],
+                 RTC.temperature(), "  [OSF 掉电过]" if RTC.osf() else ""))
+    except Exception as e:
+        print("DS3231 读取失败:", e)
+    return RTC
+
+
+def clock_state():
+    """读一次 RTC, 返回 (dt, temp, msg)。dt=None 表示读不到。"""
+    if RTC is None:
+        return None, None, CLOCK_MSG
+    try:
+        dt = RTC.datetime()
+    except Exception as e:
+        print("读时钟失败:", e)
+        return None, None, CLOCK_MSG
+    try:
+        temp = RTC.temperature()
+    except Exception:
+        temp = None
+    msg = CLOCK_MSG
+    if not msg:
+        try:
+            if RTC.osf():
+                msg = "时钟曾掉电, 建议长按对时"
+        except Exception:
+            pass
+    return dt, temp, msg
+
+
+def clock_enter(c):
+    """进入时钟页: 清提示、读一次、全刷一次。返回当前 (时, 分) 或 None。"""
+    global CLOCK_MSG
+    CLOCK_MSG = ""
+    dt, temp, msg = clock_state()
+    clock.draw(c, dt, temp, msg)
+    c.show()
+    return (dt[4], dt[5]) if dt else None
+
+
+def clock_ntp_sync(c):
+    """长按对时: 用 ntp.aliyun.com 校准 DS3231。结果写进 CLOCK_MSG。"""
+    global CLOCK_MSG
+    if RTC is None:
+        CLOCK_MSG = "未检测到时钟模块"
+        return
+    if not network.is_connected():
+        CLOCK_MSG = "Wi-Fi 未连接, 先到「网络」页连接"
+        return
+    CLOCK_MSG = "正在与 ntp.aliyun.com 对时…"
+    dt, temp, _ = clock_state()
+    clock.draw(c, dt, temp, CLOCK_MSG)
+    c.show()
+    try:
+        y, mo, d, wd, h, mi, s = network.ntp_beijing()
+    except Exception as e:
+        print("NTP 对时失败:", e)
+        CLOCK_MSG = "对时失败: %s" % str(e)[:22]
+        return
+    try:
+        RTC.set_datetime(y, mo, d, wd, h, mi, s)
+    except Exception as e:
+        print("写入时钟失败:", e)
+        CLOCK_MSG = "写入失败: %s" % str(e)[:22]
+        return
+    CLOCK_MSG = "对时成功 %02d:%02d:%02d" % (h, mi, s)
+    print("NTP 对时: %04d-%02d-%02d %02d:%02d:%02d" % (y, mo, d, h, mi, s))
+
+
+# --------------------------------------------------------------------------- #
 # 主循环
 # --------------------------------------------------------------------------- #
 def main():
@@ -308,6 +413,9 @@ def main():
     epd, c = setup()
     enc = Rotary(ENC_A, ENC_B, ENC_KEY,
                  steps_per_detent=ENC_STEPS_PER_DETENT, long_ms=ENC_LONG_MS)
+
+    # DS3231 时钟(没接也不影响其它功能)
+    setup_rtc()
 
     # 挂载 TF 卡(没有也不影响; 卡里的 /books/*.txt 会被阅读器自动扫到)
     if sdcard.mount():
@@ -350,6 +458,8 @@ def main():
     pass_t0 = 0
     last_poll = time.ticks_ms()
     toast_until = 0
+    clock_poll = 0            # 时钟页上次轮询 RTC 的时刻
+    clock_hm = None           # 时钟页当前显示的 (时, 分)
 
     draw_main(c, index, hints)
     print("主界面就绪(首屏 %d ms)。旋转=选择, 按下=确认。" % c.show())
@@ -388,6 +498,10 @@ def main():
                                 screen = "reader"
                             else:
                                 toast_until = time.ticks_add(time.ticks_ms(), TOAST_MS)
+                        elif index == IDX_CLOCK:
+                            clock_hm = clock_enter(c)
+                            clock_poll = 0
+                            screen = "clock"
                         elif index == IDX_ABOUT:
                             open_about(c)
                             screen = "about"
@@ -587,6 +701,30 @@ def main():
                         else:
                             network.pass_draw(c)
                             show_partial(c)
+
+                elif screen == "clock":
+                    # ---- 每半秒瞄一眼 RTC, 分钟变了才局刷(不闪) ----
+                    now = time.ticks_ms()
+                    if time.ticks_diff(now, clock_poll) >= 500:
+                        clock_poll = now
+                        dt, temp, msg = clock_state()
+                        if dt is not None and (dt[4], dt[5]) != clock_hm:
+                            clock_hm = (dt[4], dt[5])
+                            clock.draw(c, dt, temp, msg)
+                            show_partial(c)
+
+                    # ---- 按下退出; 长按与 NTP 对时 ----
+                    if ev & CLICK:
+                        screen = "menu"
+                        hints = build_hints()
+                        draw_main(c, index, hints)
+                        c.show()
+                    elif ev & LONG:
+                        clock_ntp_sync(c)
+                        dt, temp, msg = clock_state()
+                        clock_hm = (dt[4], dt[5]) if dt else None
+                        clock.draw(c, dt, temp, msg)
+                        c.show()
 
                 else:
                     # ---- 关于本机: 按一下或长按都返回主界面 ----

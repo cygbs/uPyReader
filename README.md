@@ -12,19 +12,25 @@ uPyReader/
 │   │   ├── epdlut.py           # 从面板 OTP 读波形并裁成不闪的局刷 LUT
 │   │   ├── rotary.py           # 旋转编码器（正交）+ 按键驱动
 │   │   ├── sysinfo.py          # 系统信息：芯片/Flash/PSRAM/MAC
-│   │   └── sdcard.py           # 挂载 TF 卡到 /sd（原生 SDMMC）
+│   │   ├── sdcard.py           # 挂载 TF 卡到 /sd（原生 SDMMC）
+│   │   └── ds3231.py           # DS3231 I2C 实时时钟（时间 / 温度 / OSF）
 │   └── ui/                     # 绘制层：画布 + 页面
 │       ├── canvas.py           # 画布 + 文本对齐 + 列表菜单 + 信息页
-│       ├── unifont.py          # UFB1 位图字库读取 + 渲染
+│       ├── unifont.py          # UFB1 位图字库读取 + 渲染（含整数倍放大）
 │       ├── about.py            # “关于本机”页面
 │       ├── settings.py         # “固件设置”页面 + 配置持久化
+│       ├── clock.py            # “时钟模式”页面（大号 HH:MM + 年月日 + 温度）
 │       └── reader.py           # 小说浏览 / 分页 / 阅读进度
 ├── assets/                     # 资源 → 设备根目录
 │   └── fonts/
 │       └── unifont16.bin       # 生成物，不入库（由 tools/build_font.py 生成）
+├── state/                      # 设备状态备份 → 设备根目录（不入库）
+│   ├── settings.json           #   固件设置
+│   ├── wifi.json               #   已保存的 Wi-Fi
+│   └── books/.state/progress.json   #   阅读进度
 ├── books/                      # 本地小说（*.txt 不入库），上传到设备 /books/
 └── tools/                      # PC 侧工具
-    ├── upload.sh               # 一键同步 src/ + assets/ + books/ 到设备
+    ├── upload.sh               # 一键同步 src/ + assets/ + state/ 到设备
     └── build_font.py           # Unifont .hex → UFB1 二进制字库
 ```
 
@@ -39,12 +45,14 @@ uPyReader/
 │   ├── epdlut.py
 │   ├── rotary.py
 │   ├── sysinfo.py
-│   └── sdcard.py
+│   ├── sdcard.py
+│   └── ds3231.py
 ├── ui/                       # 绘制层（Python 包）
 │   ├── canvas.py
 │   ├── unifont.py
 │   ├── about.py
 │   ├── settings.py
+│   ├── clock.py
 │   └── reader.py
 └── fonts/
     └── unifont16.bin
@@ -93,13 +101,35 @@ uPyReader/
 - 三个脚都启用**内部上拉**；模块自带 10k 上拉也没影响。
 - 手感不对（转一格跳太多/太少）→ 用 `main.encoder_debug()` 校准 `ENC_STEPS_PER_DETENT`。
 
+### DS3231 实时时钟（I2C，可选）
+
+模块丝印 `32K SQW SCL SDA VCC GND`，只用其中 4 根：
+
+| DS3231 丝印 | 含义 | 默认接到 | 变量 |
+|---|---|---|---|
+| `VCC` | 电源（**必须 3V3，不要接 5V**） | 3V3 | — |
+| `GND` | 地 | GND | — |
+| `SDA` | I2C 数据 | GPIO **47** | `DS3231_SDA` |
+| `SCL` | I2C 时钟 | GPIO **21** | `DS3231_SCL` |
+| `SQW` | 方波/闹钟中断输出 | 不接 | — |
+| `32K` | 32.768 kHz 输出 | 不接 | — |
+
+- **VCC 接 3V3**：ZS-042 类模块的上拉电阻挂在 VCC 上，接 5V 会把 SDA/SCL 拉到 5V，
+  而 ESP32-S3 的 IO 不耐 5V。模块自带上拉（约 4.7 k），无需外加。
+- 总线上还有模块背面的 AT24C32 EEPROM（地址 `0x57`），DS3231 是 `0x68`，不冲突。
+- 没接模块也不影响其它功能：主界面「时钟模式」右侧显示 `--:--`，页面提示未检测到。
+- **不要用 GPIO48**：它是板载 WS2812 三色 LED 的数据脚，I2C 时钟会被 LED 当成
+  颜色数据随机点亮（不是故障，但很晃眼）。
+- **不要用 GPIO37**：它是 Octal-PSRAM 的 DQS。
+
 注意：
 - `SDI` = MOSI（ESP32 输出数据给屏幕），`SCLK` = 时钟。屏是只写设备，
   **没有 MISO / 回读引脚**，SPI 只初始化 `sck` + `mosi` 即可（代码已如此）。
 - 屏幕是 3.3 V 供电，**不要接 5 V**。
-- 这些 GPIO 要避开：**7–12**（墨水屏）、**19/20**（USB）、**26–37**（内部 Flash /
-  Octal-PSRAM，N16R8 的 R8 用掉 33–37）、**39–42**（JTAG）、**43/44**（UART0）、
-  **0/3/45/46**（strapping）。上面默认用到的引脚都是安全的。
+- 这些 GPIO 要避开：**7–12**（墨水屏）、**19/20**（USB D-/D+，占了会断串口）、
+  **26–37**（内部 Flash / Octal-PSRAM，N16R8 的 R8 用掉 33–37，**37 尤其不能用**）、
+  **39–42**（JTAG）、**43/44**（UART0）、**0/3/45/46**（strapping）、
+  **48**（板载 WS2812 LED 数据脚）。上面默认用到的引脚都是安全的。
 - BUSY 需要能读到高电平；如果一直“busy timeout”，见下面排错。
 
 ---
@@ -115,44 +145,30 @@ uv tool install mpremote
 
 ### 一键上传（推荐）
 
-`tools/upload.sh` 会把 `src/`（源码）和 `assets/`（资源）下的**所有**顶层条目
-同步到设备根目录，并把 `books/` 下的 `.txt` 同步到设备 `/books/`；默认按 sha256
-跳过未改动文件：
+`tools/upload.sh` **没有任何参数和开关**：固定 `/dev/ttyACM0`，先
+`sudo chmod 777` 串口，再把下面三个目录的**所有顶层条目**同步到设备根目录，
+并**按 sha256 跳过未改动文件**：
+
+| 本地目录 | 落到设备 | 内容 |
+|---|---|---|
+| `src/` | `/` | 代码（`main.py`、`driver/`、`ui/`） |
+| `assets/` | `/` | 资源（`fonts/unifont16.bin`） |
+| `state/` | `/` | 设备状态（`settings.json`、`wifi.json`、`books/.state/progress.json`） |
 
 ```bash
 cd /home/ygbs/下载/uPyReader
 chmod +x tools/upload.sh
-
-tools/upload.sh                 # 默认 /dev/ttyACM0
-tools/upload.sh /dev/ttyUSB0     # 指定串口
+tools/upload.sh
 ```
 
-可选环境变量：
-
-| 变量 | 作用 |
-|---|---|
-| `FORCE=1` | 强制重传（不跳过内容相同的文件） |
-| `CLEAN=1` | 上传前先删掉对应的远端目录（本地删了文件时用它清理） |
-| `SYNC_BOOKS=1` | 把 `books/*.txt` 同步到设备 `/books/`（小说大，默认不传） |
-| `RUN=1` | 上传后执行 `main.main()` |
-| `RUN='import xxx; xxx.main()'` | 上传后执行任意 Python 片段 |
-| `MPREMOTE=/path/to/mpremote` | 指定 mpremote 可执行文件 |
-| `CHMOD=0` | 跳过上传前自动执行的 `sudo chmod 777 <PORT>` |
-
-> 默认每次上传前会先 `sudo chmod 777 <端口>`（重新插拔后串口权限常被重置），
-> 可能会提示输入 sudo 密码。若你已把账号加入 `dialout` 组、无需此步，可加 `CHMOD=0`。
-
-示例：
-
-```bash
-FORCE=1 tools/upload.sh                      # 全量重传
-RUN=1 tools/upload.sh                        # 传完就进主界面
-CLEAN=1 RUN=1 tools/upload.sh                # 清干净再传再跑
-```
-
-路径映射规则：`src/` 和 `assets/` 的每个顶层条目都原样落到设备根，例如
-`src/driver/epd_ssd1619.py` → `/driver/epd_ssd1619.py`，
+路径映射规则：每个顶层条目原样落到设备根，例如
+`src/driver/ds3231.py` → `/driver/ds3231.py`，
 `assets/fonts/unifont16.bin` → `/fonts/unifont16.bin`。
+
+> **为什么不做“强制重传”开关**：`mpremote` 上传是逐块写 littlefs，一旦在传大文件
+> （例如 726 KB 的字库）中途被打断（Ctrl-C / 拔线 / 超时），设备上就会留下一个写了一半
+> 的文件，甚至把 littlefs 写坏。不传 `-f` 时 `mpremote` 会按 sha256 跳过内容相同的
+> 文件，所以字库这种大文件平时根本不会被重写。
 
 > 实现细节：脚本用 `mpremote cp -r ... :.`（远端当前目录）而不是 `:`。
 > 因为 `mpremote` 对 `:` 是否“已存在”的判断依赖 `os.stat("")`，行为不稳；
@@ -196,6 +212,7 @@ mpremote connect $PORT exec "import main; main.main()"
 ┌ uPyReader ────────────────────────────┐
 │ ▶ 继续阅读                小说.txt   │  ← 选中项画方框 + ▶
 │   浏览文件                    1 本   │  ← Flash 里的 .txt 数量
+│   时钟模式                   20:46   │  ← DS3231 当前时间
 │   关于本机                ESP32-S3   │
 │   固件设置                     8-12-0│
 │   网络                            关 │
@@ -204,7 +221,7 @@ mpremote connect $PORT exec "import main; main.main()"
 └─────────────────────────────────────┘
 ```
 
-菜单共 6 项（「插件」在「网络」下方），本机一屏 5 行；超过一屏时列表可滚动，
+菜单共 7 项（「插件」在「网络」下方），本机一屏 5 行；超过一屏时列表可滚动，
 右侧会画一条**滚动条**表示当前位置。
 
 > 「固件设置」右侧的提示是 `全刷-局刷深度-字符间距` 的紧凑格式，
@@ -217,11 +234,42 @@ mpremote connect $PORT exec "import main; main.main()"
 | 旋转编码器 | 上下移动选中项（循环，首尾相接） |
 | 按下「继续阅读」 | 直接打开上次读到的那本书、那个位置 |
 | 按下「浏览文件」 | 列出 Flash 里所有 `.txt`，进入后旋转选择、按下阅读 |
+| 按下「时钟模式」 | 进入时钟页（大号时间 + 年月日 + DS3231 温度） |
 | 按下「关于本机」 | 进入信息页 |
 | 按下「固件设置」 | 进入设置页（全刷间隔 / 局刷深度 / 字符间距） |
 | 按下「网络」 | 进入网络页（WLAN 开关 / 扫描 Wi-Fi） |
 | 按下「插件」 | 底部提示「子页面待实现」，1.5 s 后恢复 |
-| 长按 | 主界面暂未使用；子页面/文件列表里是「返回」 |
+| 长按 | 主界面暂未使用；子页面/文件列表里多为「返回」，时钟页是「NTP 对时」 |
+
+### 「时钟模式」页面
+
+主界面旋转到「时钟模式」→ 按下进入：
+
+```
+┌ 时钟模式 ──────────────────────────┐
+│                                    │
+│             20:46                  │  ← 屏幕正中, 超大 24 小时制 HH:MM
+│                                    │
+│          2026-09-30 周三            │  ← 年月日 + 周几
+│           温度 20.75 °C              │  ← DS3231 片内温度(不是屏幕的)
+│                                    │
+├────────────────────────────────────┤
+│ 按下退出   长按与 NTP 对时          │
+└────────────────────────────────────┘
+```
+
+| 动作 | 效果 |
+|---|---|
+| 按下 | 退出回主界面 |
+| 长按 | 用 `ntp.aliyun.com` 校准 DS3231（需先连 Wi-Fi；未连会提示） |
+| 停留时 | **每分钟局刷一次**，时间自己走，不闪 |
+
+- 时间用 24 小时制、补 0（`HH:MM`），字位固定不跳动；大号数字由
+  `unifont.draw_scaled()` 把 16×16 点阵按整数倍放大绘制。
+- 温度取 **DS3231 片内传感器**（每 64 秒更新一次，精度 ±3 °C 且芯片自热略偏高）；
+  屏内温度计只用在「关于本机」页，这里不用，避免混淆。
+- 进入页面时全刷一次，之后每分钟走局刷 LUT（不闪）。DS3231 的 OSF 位置位时
+  页面会提示「时钟曾掉电，建议长按对时」。
 
 ### 「关于本机」页面
 
@@ -338,12 +386,12 @@ mpremote connect $PORT exec "import main; main.main()"
 
 ### 阅读小说（浏览文件 / 继续阅读）
 
-把 `.txt` 小说放进设备的 `/books/` 目录（`tools/upload.sh` 会自动把仓库
-`books/*.txt` 同步到 `/books/`；`.gitignore` 已忽略 `*.txt`，不会入库）：
+把 `.txt` 小说直接放到设备的 `/books/` 目录即可（`tools/upload.sh` 不会同步小说，
+`.gitignore` 已忽略 `*.txt`）：
 
 ```bash
-cp /path/to/小说.txt books/     # 放到仓库 books/ 目录
-SYNC_BOOKS=1 CHMOD=0 tools/upload.sh   # 上传代码 + 小说(小说大, 传输较慢)
+mpremote connect /dev/ttyACM0 fs mkdir :books        # 设备上没有 /books 时先建
+mpremote connect /dev/ttyACM0 cp 小说.txt :books/     # 小说大, 传输较慢, 且别中途打断
 ```
 
 主界面 ↓「浏览文件」→ 按下，列出 Flash 里所有 `.txt`：
@@ -579,7 +627,8 @@ GNU Unifont 双许可（SIL OFL 1.1 / GPL-2.0+ 带字体嵌入例外）。本项
 
 有些 TF 转接模块的 `SD-CD` 是卡座里的机械开关。本项目的裸转接模块该脚**悬空**：
 实测 `PULL_UP` 读 1、`PULL_DOWN` 读 0，说明它没接地，无法判断有无卡。
-因此代码不依赖卡检测（`hwconfig.SD_CD` 仅作记录），挂载失败就当成“未插卡”，
+因此代码不依赖卡检测（`hwconfig.SD_CD` 现为 `None`，GPIO21 已让位给 DS3231 的
+SCL），挂载失败就当成“未插卡”，
 不影响使用。热插拔后想重新挂载，手动调 `sdcard.mount(force=True)` 即可。
 
 ### 6.3 为什么砍掉了 SPI 模式挂载

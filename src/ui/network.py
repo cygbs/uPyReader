@@ -29,6 +29,11 @@ SOLID = (WLAN_ROW,)          # 第 0 行下方画实线(其余行虚线)
 
 WIFI_FILE = "/wifi.json"     # 只保存一个网络: {"ssid":..,"pass":..}
 
+# 时钟对时(NTP)
+NTP_HOST = "ntp.aliyun.com"  # 阿里云 NTP 服务器
+NTP_TIMEOUT = 3              # 单次 NTP 请求超时(秒)
+TZ_OFFSET = 8 * 3600         # 北京时间 = UTC+8; 换时区只改这里
+
 # 密码页: 旋转选择这 4 个目标
 SEL_MORSE, SEL_BACK, SEL_CANCEL, SEL_CONNECT = range(4)
 SEL_COUNT = 4
@@ -84,6 +89,11 @@ def status_hint():
     if _connected_ssid:
         return _connected_ssid
     return "开" if _on else "关"
+
+
+def is_connected():
+    """当前是否已连上 Wi-Fi(由主循环的 poll() 维护状态)。"""
+    return bool(_connected_ssid)
 
 
 def items():
@@ -363,3 +373,22 @@ def poll():
         _connected_ssid = ssid
         return True
     return False
+
+
+# ------------------------------------------------------------------ NTP 对时
+def ntp_beijing(host=NTP_HOST):
+    """用 NTP 取时间并转成北京时间。
+
+    返回 (年, 月, 日, 周(1=周一..7=周日), 时, 分, 秒)。失败抛异常。
+
+    MicroPython 的 ntptime 没有 time() 接口(只有 settime()), 所以走
+    settime() 把 ESP32 内部 RTC 设为 UTC, 再用 time.localtime() 换算。
+    注意 ESP32 的 time.localtime(secs) 纪元是 2000 年, 但 settime() 内部
+    已处理好纪元, 之后 time.time()/localtime() 可放心直接相加。
+    """
+    import ntptime
+    ntptime.host = host
+    ntptime.timeout = NTP_TIMEOUT
+    ntptime.settime()                       # 把 ESP32 内部 RTC 设为 UTC
+    tm = time.localtime(time.time() + TZ_OFFSET)
+    return (tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5])
