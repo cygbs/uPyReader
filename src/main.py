@@ -57,7 +57,7 @@ from driver.epd_ssd1619 import EPD_SSD1619
 from driver.rotary import Rotary, CLICK, LONG
 from driver import epdlut, sdcard, sysinfo
 from ui.unifont import Unifont
-from ui import about, canvas, reader, settings
+from ui import about, canvas, network, reader, settings
 
 
 LIST_TOP = 26            # 列表起始 y
@@ -101,6 +101,10 @@ def hint_fw():
     return "%s-%d-%d" % (fe, PARTIAL_REP, LINE_GAP)
 
 
+def hint_net():
+    return "开" if network.is_on() else "关"
+
+
 def hint_plugins():
     return "%d 个" % count_plugins()
 
@@ -110,13 +114,15 @@ MENU = (
     ("浏览文件", hint_files),
     ("关于本机", hint_chip),
     ("固件设置", hint_fw),
+    ("网络", hint_net),
     ("插件", hint_plugins),
 )
 IDX_CONTINUE = 0
 IDX_FILES = 1
 IDX_ABOUT = 2
 IDX_SETTINGS = 3
-IDX_PLUGINS = 4
+IDX_NETWORK = 4
+IDX_PLUGINS = 5
 
 
 # --------------------------------------------------------------------------- #
@@ -225,7 +231,11 @@ def build_hints():
 def draw_main(c, index, hints):
     c.fb.fill(0)
     canvas.title_bar(c, "uPyReader")
-    canvas.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints)
+    # 菜单超过一屏时可滚动, 右侧画滚动条
+    rows = canvas.list_rows(c, LIST_TOP, ROW_H)
+    first = index - rows + 1 if index >= rows else 0
+    canvas.draw_list(c, [t for t, _ in MENU], index, LIST_TOP, ROW_H, hints,
+                     rows=rows, first=first, scrollbar=True)
     canvas.draw_footer(c, FOOT_HINT)
 
 
@@ -233,9 +243,10 @@ def draw_files(c, books, index, scroll):
     c.fb.fill(0)
     canvas.title_bar(c, "浏览文件", "%d 本" % len(books))
     if books:
-        vis = books[scroll:scroll + FILE_ROWS]
-        canvas.draw_list(c, [n.rsplit("/", 1)[-1] for n, _ in vis], index - scroll,
-                         LIST_TOP, ROW_H, [sysinfo.fmt_size(s) for _, s in vis])
+        canvas.draw_list(c, [n.rsplit("/", 1)[-1] for n, _ in books], index,
+                         LIST_TOP, ROW_H,
+                         [sysinfo.fmt_size(s) for _, s in books],
+                         rows=FILE_ROWS, first=scroll, scrollbar=True)
     else:
         lh = c.font.line_height
         canvas.text_center(c, "没有找到 .txt 文件", 120)
@@ -330,6 +341,8 @@ def main():
     set_index = 0
     set_edit = False
     set_moves = 0
+    net_index = 0
+    net_moves = 0
     toast_until = 0
 
     draw_main(c, index, hints)
@@ -381,6 +394,12 @@ def main():
                             settings.draw(c, cfg, set_index, set_edit)
                             c.show()
                             screen = "settings"
+                        elif index == IDX_NETWORK:
+                            net_index = 0
+                            net_moves = 0
+                            network.draw(c, net_index)
+                            c.show()
+                            screen = "network"
                         elif index == IDX_PLUGINS:
                             show_toast(c, "已选择：%s" % MENU[index][0],
                                        "子页面待实现")
@@ -483,6 +502,35 @@ def main():
                         set_edit = False
                         screen = "menu"
                         hints = build_hints()      # 全刷间隔可能刚改过
+                        draw_main(c, index, hints)
+                        c.show()
+
+                elif screen == "network":
+                    # ---- 旋转: 在 WLAN 开关与扫描到的热点之间选择 ----
+                    count = len(network.items()[0])
+                    if net_index >= count:
+                        net_index = 0
+                    if d and count:
+                        prev = net_moves
+                        net_moves += 1
+                        net_index = (net_index + d) % count
+                        network.draw(c, net_index)
+                        refresh_screen(c, net_moves, prev)
+
+                    # ---- 按下: WLAN 行切换开关并扫描; 热点行暂不支持连接 ----
+                    if ev & CLICK:
+                        if net_index == 0:
+                            if not network.is_on():
+                                network.draw_scanning(c)
+                                show_partial(c)
+                            network.toggle()
+                            net_index = 0
+                            net_moves += 1
+                            network.draw(c, net_index)
+                            show_partial(c)
+                    elif ev & LONG:
+                        screen = "menu"
+                        hints = build_hints()
                         draw_main(c, index, hints)
                         c.show()
 

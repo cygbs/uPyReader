@@ -86,32 +86,65 @@ def dashed_hline(fb, x, y, w, dash=4, gap=4, color=1):
         x += dash + gap
 
 
+def list_rows(c, top, row_h, bottom=None):
+    """按屏幕高度算出一屏能显示几行列表(至少 1 行)。"""
+    if bottom is None:
+        bottom = c.height - c.font.line_height - 12
+    n = (bottom - top) // row_h
+    return n if n > 0 else 1
+
+
 def draw_list(c, items, index, top, row_h, hints=None,
-              marker="\u25b6", left=6, indent=44, right_pad=16):
-    """通用竖向列表: 选中项用方框框住并带 marker, 右侧 hint 右对齐, 行间虚分隔线。
+              marker="\u25b6", left=6, indent=44, right_pad=16,
+              rows=None, first=0, scrollbar=False, solid=()):
+    """通用竖向列表: 选中项用方框框住并带 marker, 右侧 hint 右对齐, 行间分隔线。
 
     items: 字符串序列
     hints: 与 items 等长的右侧说明(可为 None)
+    rows / first: 只画 [first, first+rows) 这些行(滚动窗口); rows=None 表示全部
+    scrollbar: 内容多于一屏时在右侧画滚动条
+    solid: 需要画“实线”分隔符的行号集合(默认虚线)
     """
     fb = c.fb
     font = c.font
-    ty = (row_h - 6 - font.cell_h) // 2        # 行内垂直居中
-    for i, title in enumerate(items):
-        y = top + i * row_h
+    n = len(items)
+    if rows is None or rows > n:
+        rows = n
+    if rows < 1:
+        return
+    if first > n - rows:
+        first = n - rows
+    if first < 0:
+        first = 0
+    bar = 9 if (scrollbar and n > rows) else 0      # 给滚动条留出的右边距
+    ty = (row_h - 6 - font.cell_h) // 2             # 行内垂直居中
+    sep_w = c.width - 2 * left - 24
+    for i in range(first, first + rows):
+        y = top + (i - first) * row_h
+        title = items[i]
         hint = None if hints is None else hints[i]
         if i == index:
             # 选中项: 只画一圈方框(不用整行反白黑块), 变化像素少很多
-            fb.rect(left, y, c.width - 2 * left, row_h - 6, 1)
+            fb.rect(left, y, c.width - 2 * left - bar, row_h - 6, 1)
             font.draw(fb, marker, left + 8, y + ty)
-            font.draw(fb, title, indent, y + ty)
-            if hint:
-                text_right(c, hint, c.width - right_pad, y + ty)
-        else:
-            font.draw(fb, title, indent, y + ty)
-            if hint:
-                text_right(c, hint, c.width - right_pad, y + ty)
-            dashed_hline(fb, left + 12, y + row_h - 6,
-                         c.width - 2 * left - 24)
+        if i in solid:
+            fb.hline(left + 12, y + row_h - 6, sep_w, 1)
+        elif i != index:
+            dashed_hline(fb, left + 12, y + row_h - 6, sep_w)
+        font.draw(fb, title, indent, y + ty)
+        if hint:
+            text_right(c, hint, c.width - right_pad - bar, y + ty)
+
+    if scrollbar and n > rows:
+        # 右侧滚动条: 3px 轨道 + 按比例/位置滚动的滑块
+        bx = c.width - 6
+        bh = rows * row_h - 6
+        fb.rect(bx, top, 3, bh, 1)
+        th = bh * rows // n
+        if th < 8:
+            th = 8
+        by = top + (bh - th) * first // (n - rows)
+        fb.fill_rect(bx, by, 3, th, 1)
 
 
 def draw_footer(c, left_text, right_text=None):
